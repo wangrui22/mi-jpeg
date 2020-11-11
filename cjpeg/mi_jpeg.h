@@ -8,6 +8,7 @@ public:
     Jpeg();
     ~Jpeg();
     void compress();
+    int rgb_2_yuv(std::shared_ptr<RGBImage> raw_img);
     void dct();
 };
 
