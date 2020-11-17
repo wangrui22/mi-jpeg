@@ -132,3 +132,9 @@ void Jpeg::init_quantization_table_fast(float (&qt)[64]) {
 void Jpeg::quantize_8x8(int* inout, float* qt) {
     quantize8(inout, qt);
 }
+
+void Jpeg::zig_zag(int* input, int* output) {
+    for (int i=0; i<64; ++i) {
+        output[i] = input[ZIGZAG_TABLE[i]];
+    }
+}

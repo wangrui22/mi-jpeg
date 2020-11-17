@@ -19,6 +19,7 @@ public:
     void init_quantization_table_fast(float (&qt)[64]);
     
     void quantize_8x8(int* inout, float* qt);
+    void zig_zag(int* input, int* output);
 
 };
 

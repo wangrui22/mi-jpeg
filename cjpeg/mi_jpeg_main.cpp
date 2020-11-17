@@ -30,11 +30,22 @@ void test() {
     float qt[64];
     jpeg.init_quantization_table(qt);
     jpeg.quantize_8x8(input, qt);
+
     for (int i=0; i<64; ++i) {
         if (i%8 == 0) {
             std::cout << "\n";
         }
         std::cout << input[i] << " ";
+    }
+
+    std::cout << "\n\nZigZag:";
+    int output[64];
+    jpeg.zig_zag(input, output);
+    for (int i=0; i<64; ++i) {
+        if (i%8 == 0) {
+            std::cout << "\n";
+        }
+        std::cout << output[i] << " ";
     }
 }
 
@@ -70,6 +81,16 @@ void test_fast() {
             std::cout << "\n";
         }
         std::cout << input[i] << " ";
+    }
+
+    std::cout << "\n\nZigZag:";
+    int output[64];
+    jpeg.zig_zag(input, output);
+    for (int i=0; i<64; ++i) {
+        if (i%8 == 0) {
+            std::cout << "\n";
+        }
+        std::cout << output[i] << " ";
     }
 }
 
