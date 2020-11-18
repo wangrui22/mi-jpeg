@@ -2,7 +2,8 @@
 
 namespace {
 
-static int gpujpeg_table_default_quantization_luminance[64] = { 
+/** Default Quantization Table for Y component (zig-zag order)*/
+static unsigned char gpujpeg_table_default_quantization_luminance[64] = { 
   16,  11,  12,  14,  12,  10,  16,  14,
   13,  14,  18,  17,  16,  19,  24,  40,
   26,  24,  22,  22,  24,  49,  35,  37,
@@ -14,7 +15,7 @@ static int gpujpeg_table_default_quantization_luminance[64] = {
 };
 
 /** Default Quantization Table for Cb or Cr component (zig-zag order) */
-static int gpujpeg_table_default_quantization_chrominance[64] = { 
+static unsigned char gpujpeg_table_default_quantization_chrominance[64] = { 
   17,  18,  18,  24,  21,  24,  47,  26,
   26,  47,  99,  66,  56,  66,  99,  99,
   99,  99,  99,  99,  99,  99,  99,  99,
@@ -25,16 +26,16 @@ static int gpujpeg_table_default_quantization_chrominance[64] = {
   99,  99,  99,  99,  99,  99,  99,  99
 };
 
-static const char ZIGZAG_TABLE[64] = { 
-	0, 1, 5, 6,14,15,27,28,
-	2, 4, 7,13,16,26,29,42,
-	3, 8,12,17,25,30,41,43,
-	9,11,18,24,31,40,44,53,
-	10,19,23,32,39,45,52,54,
-	20,22,33,38,46,51,55,60,
-	21,34,37,47,50,56,59,61,
-	35,36,48,49,57,58,62,63 
-};
+// static const unsigned char ZIGZAG_TABLE[64] = { 
+// 	0, 1, 5, 6,14,15,27,28,
+// 	2, 4, 7,13,16,26,29,42,
+// 	3, 8,12,17,25,30,41,43,
+// 	9,11,18,24,31,40,44,53,
+// 	10,19,23,32,39,45,52,54,
+// 	20,22,33,38,46,51,55,60,
+// 	21,34,37,47,50,56,59,61,
+// 	35,36,48,49,57,58,62,63 
+// };
 
 static const unsigned char bits_dc_luminance[17] =
     { /* 0-base */ 0, 0, 1, 5, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0 };
@@ -97,7 +98,6 @@ static const unsigned char val_ac_chrominance[] =
       0xea, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8,
       0xf9, 0xfa };
 
-
 inline int div_and_round_up(const int val, const int div) {
     return (val % div == 0) ? val : (val/div+1)*div;
 }
@@ -141,7 +141,7 @@ inline void dct_1d_8_fast(const T0 in0, const T0 in1, const T0 in2, const T0 in3
     out7 = odd_diff1 - odd_diff4;
 }
 
-inline void init_qtable(int (&qt_raw)[64], float (&qt)[64]) {
+inline void init_qtable(unsigned char (&qt_raw)[64], float (&qt)[64]) {
     static const double aanscalefactor[8] = {
 	  1.0, 1.387039845, 1.306562965, 1.175875602,
 	  1.0, 0.785694958, 0.541196100, 0.275899379
@@ -180,7 +180,60 @@ inline BitString get_bit_code(int value) {
 	ret.value = value > 0 ? value : (1 << length) + value - 1;
 	ret.length = length;
 	return ret;
-};
+}
+
+const static unsigned int BASIC_BYTE = 1024*1024*2;
+
+inline void write_word(unsigned short val, unsigned char* buffer, unsigned int& byte) {
+    unsigned short val0 = ((val>>8)&0xFF) | ((val&0xFF)<<8);
+    *((unsigned short*)buffer) = val0;
+    byte += 2;
+}
+
+inline void write_byte(unsigned char val, unsigned char* buffer, unsigned int& byte) {
+    *buffer = val;
+    byte += 1;
+}
+
+inline void write_byte_array(const unsigned char* buf, unsigned int buf_len, unsigned char* buffer, unsigned int& byte) {
+    memcpy(buffer, buf, buf_len);
+    byte += buf_len;
+}
+
+inline void write_bitstring(const BitString* bs, int counts, int& new_byte, int& new_byte_pos, unsigned char* buffer, unsigned int& byte)
+{
+	const unsigned short mask[] = {1,2,4,8,16,32,64,128,256,512,1024,2048,4096,8192,16384,32768};
+	
+	for(int i=0; i<counts; ++i)
+	{
+		int value = bs[i].value;
+		int posval = bs[i].length - 1;
+
+		while (posval >= 0)
+		{
+			if ((value & mask[posval]) != 0)
+			{
+				new_byte = new_byte  | mask[new_byte_pos];
+			}
+			posval--;
+			new_byte_pos--;
+			if (new_byte_pos < 0)
+			{
+				// Write to stream
+				::write_byte((unsigned char)(new_byte), buffer, byte);
+				if (new_byte == 0xFF)
+				{
+					// Handle special case
+					::write_byte((unsigned char)(0x00), buffer, byte);
+				}
+
+				// Reinitialize
+				new_byte_pos = 7;
+				new_byte = 0;
+			}
+		}
+	}
+}
 
 
 }
@@ -207,6 +260,7 @@ void JpegEncoder::init() {
 }
 
 int JpegEncoder::compress(std::shared_ptr<Image> rgb, unsigned char*& compress_buffer, unsigned int& buffer_len) {  
+    write_jpeg_header(rgb);
 
     std::vector<Segment> segments;
     rgb_2_yuv_segment(rgb, segments);
@@ -230,6 +284,18 @@ int JpegEncoder::compress(std::shared_ptr<Image> rgb, unsigned char*& compress_b
         huffman_encode_8x8(segment.quat_u, u_preDC, _huffman_table_CbCr_DC, _huffman_table_CbCr_AC, segment.huffman_code_u, segment.huffman_code_u_count);
         huffman_encode_8x8(segment.quat_v, v_preDC, _huffman_table_CbCr_DC, _huffman_table_CbCr_AC, segment.huffman_code_v, segment.huffman_code_v_count);
     }
+
+    int new_byte=0, new_byte_pos=7;
+    for (int i=0; i<seg_count; ++i) {
+        Segment& segment = segments[i];
+        write_bitstring(segment.huffman_code_y, segment.huffman_code_y_count, new_byte, new_byte_pos);
+        write_bitstring(segment.huffman_code_u, segment.huffman_code_u_count, new_byte, new_byte_pos);
+        write_bitstring(segment.huffman_code_v, segment.huffman_code_v_count, new_byte, new_byte_pos);
+    }
+
+    buffer_len = _compress_byte;
+    compress_buffer = new unsigned char[buffer_len];
+    memcpy(compress_buffer, _compress_buffer, _compress_byte);
 
     return 0;
 }
@@ -318,7 +384,7 @@ void JpegEncoder::dct_8x8(unsigned char* val, short* output, float* quant_table)
 
     //quantization
     for (int i=0; i<64; ++i) {
-        output[ZIGZAG_TABLE[i]] = (int)(output[i]*quant_table[ZIGZAG_TABLE[i]] + 0.5f);
+        output[i] = (short)(output[i]*quant_table[i] + 0.5f);
     }
 }
 
@@ -372,10 +438,112 @@ void JpegEncoder::huffman_encode_8x8(short* quant, short preDC,
 	output_count = index;
 }
 
-void JpegEncoder::write_jpeg_header(std::shared_ptr<Image> rgb) {
-    
+void JpegEncoder::write_word(unsigned short val) {
+    ::write_word(val, _compress_buffer, _compress_byte);
 }
 
-void JpegEncoder::write_jpeg_segment(const std::vector<Segment>& segment) {
+void JpegEncoder::write_byte(unsigned char val) {
+    ::write_byte(val, _compress_buffer, _compress_byte);
+}
+
+void JpegEncoder::write_byte_array(const unsigned char* buf, unsigned int buf_len) {
+    ::write_byte_array(buf, buf_len, _compress_buffer, _compress_byte);
+}
+
+void JpegEncoder::write_bitstring(const BitString* bs, int counts, int& new_byte, int& new_byte_pos) {
+    ::write_bitstring(bs, counts, new_byte, new_byte_pos, _compress_buffer, _compress_byte);
+}
+
+void JpegEncoder::write_jpeg_header(std::shared_ptr<Image> rgb) {
+
+    _compress_capacity = BASIC_BYTE;
+    _compress_buffer = new unsigned char[_compress_capacity];
+    
+    //SOI
+	write_word(0xFFD8);		// marker = 0xFFD8
+
+	//APPO
+	write_word(0xFFE0);		// marker = 0xFFE0
+	write_word(16);			// length = 16 for usual JPEG, no thumbnail
+    unsigned char JFIF[5];
+    JFIF[0] = 'J';
+    JFIF[1] = 'F';
+    JFIF[2] = 'I';
+    JFIF[3] = 'F';
+    JFIF[4] = 0;
+	write_byte_array(JFIF, 5);			// 'JFIF\0'
+	write_byte(1);			// version_hi
+	write_byte(1);			// version_low
+	write_byte(0);			// xyunits = 0 no units, normal density
+	write_word(1);			// xdensity
+	write_word(1);			// ydensity
+	write_byte(0);			// thumbWidth
+	write_byte(0);			// thumbHeight
+
+	//DQT
+	write_word(0xFFDB);		//marker = 0xFFDB
+	write_word(132);			//size=132
+	write_byte(0);			//QTYinfo== 0:  bit 0..3: number of QT = 0 (table for Y) 
+									//				bit 4..7: precision of QT
+									//				bit 8	: 0
+	write_byte_array(gpujpeg_table_default_quantization_luminance, 64);		//YTable
+	write_byte(1);			//QTCbinfo = 1 (quantization table for Cb,Cr)
+	write_byte_array(gpujpeg_table_default_quantization_chrominance, 64);	//CbCrTable
+
+	//SOFO
+	write_word(0xFFC0);			//marker = 0xFFC0
+	write_word(17);				//length = 17 for a truecolor YCbCr JPG
+	write_byte(8);				//precision = 8: 8 bits/sample 
+	write_word(rgb->height&0xFFFF);	//height
+	write_word(rgb->width&0xFFFF);	//width
+	write_byte(3);				//nrofcomponents = 3: We encode a truecolor JPG
+
+	write_byte(1);				//IdY = 1
+	write_byte(0x11);				//HVY sampling factors for Y (bit 0-3 vert., 4-7 hor.)(SubSamp 1x1)
+	write_byte(0);				//QTY  Quantization Table number for Y = 0
+
+	write_byte(2);				//IdCb = 2
+	write_byte(0x11);				//HVCb = 0x11(SubSamp 1x1)
+	write_byte(1);				//QTCb = 1
+
+	write_byte(3);				//IdCr = 3
+	write_byte(0x11);				//HVCr = 0x11 (SubSamp 1x1)
+	write_byte(1);				//QTCr Normally equal to QTCb = 1
+	
+	//DHT
+	write_word(0xFFC4);		//marker = 0xFFC4
+	write_word(0x01A2);		//length = 0x01A2
+	write_byte(0);			//HTYDCinfo bit 0..3	: number of HT (0..3), for Y =0
+									//			bit 4		: type of HT, 0 = DC table,1 = AC table
+									//			bit 5..7	: not used, must be 0
+	write_byte_array(bits_dc_luminance, sizeof(bits_dc_luminance));	//DC_L_NRC
+	write_byte_array(val_dc_luminance, sizeof(val_dc_luminance));		//DC_L_VALUE
+	write_byte(0x10);			//HTYACinfo
+	write_byte_array(bits_ac_luminance, sizeof(bits_ac_luminance));
+	write_byte_array(val_ac_luminance, sizeof(val_ac_luminance)); //we'll use the standard Huffman tables
+	write_byte(0x01);			//HTCbDCinfo
+	write_byte_array(bits_dc_chrominance, sizeof(bits_dc_chrominance));
+	write_byte_array(val_dc_chrominance, sizeof(val_dc_chrominance));
+	write_byte(0x11);			//HTCbACinfo
+	write_byte_array(bits_ac_chrominance, sizeof(bits_ac_chrominance));
+	write_byte_array(val_ac_chrominance, sizeof(val_ac_chrominance));
+
+	//SOS
+	write_word(0xFFDA);		//marker = 0xFFC4
+	write_word(12);			//length = 12
+	write_byte(3);			//nrofcomponents, Should be 3: truecolor JPG
+
+	write_byte(1);			//Idy=1
+	write_byte(0);			//HTY	bits 0..3: AC table (0..3)
+									//		bits 4..7: DC table (0..3)
+	write_byte(2);			//IdCb
+	write_byte(0x11);			//HTCb
+
+	write_byte(3);			//IdCr
+	write_byte(0x11);			//HTCr
+
+	write_byte(0);			//Ss not interesting, they should be 0,63,0
+	write_byte(0x3F);			//Se
+	write_byte(0);			//Bf
 
 }

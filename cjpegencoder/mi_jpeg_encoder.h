@@ -107,11 +107,16 @@ public:
     void huffman_encode_8x8(short* quant, short preDC, const BitString* HTDC, const BitString* HTAC, BitString* output, int& output_count);
 
     void write_jpeg_header(std::shared_ptr<Image> rgb);
-    void write_jpeg_segment(const std::vector<Segment>& segment);
+
+    void write_word(unsigned short val);
+    void write_byte(unsigned char val);
+    void write_byte_array(const unsigned char* buf, unsigned int buf_len);
+    void write_bitstring(const BitString* bs, int counts, int& new_byte, int& new_byte_pos);
 
 private:
-    // std::vector<Segment> _segment;
-    // unsigned char* _compress_buffer;
+    unsigned char* _compress_buffer;
+    unsigned int _compress_capacity;
+    unsigned int _compress_byte;
 
     float _quantization_table_luminance[64];
     float _quantization_table_chrominance[64];
