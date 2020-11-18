@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <memory.h>
 #include <math.h>
+#include <iostream>
 
 #include "jpeg_encoder.h"
 
@@ -48,9 +49,24 @@ const char ZigZag[64] =
 	35,36,48,49,57,58,62,63 
 };     
 
+// static unsigned char gpujpeg_table_huffman_y_dc_bits[17] = {
+//     0, 0, 1, 5, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0 
+// };
+// static unsigned char gpujpeg_table_huffman_y_dc_value[] = { 
+//     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 
+// };
+// /** Huffman Table DC for Cb or Cr component */
+// static unsigned char gpujpeg_table_huffman_cbcr_dc_bits[17] = { 
+//     0, 0, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0 
+// };
+// static unsigned char gpujpeg_table_huffman_cbcr_dc_value[] = { 
+//     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 
+// };
 
 const char Standard_DC_Luminance_NRCodes[] = { 0, 0, 7, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0 };
 const unsigned char Standard_DC_Luminance_Values[] = { 4, 5, 3, 2, 6, 1, 0, 7, 8, 9, 10, 11 };
+// const char Standard_DC_Luminance_NRCodes[] = { 0, 1, 5, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0 };
+// const unsigned char Standard_DC_Luminance_Values[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
 
 
 const char Standard_DC_Chrominance_NRCodes[] = { 0, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0 };
@@ -192,6 +208,9 @@ bool JpegEncoder::encode_to_jpeg(unsigned char* rgb, int width, int height, int 
 void JpegEncoder::init_huffman_tables(void) {
 	memset(&m_Y_DC_Huffman_Table, 0, sizeof(m_Y_DC_Huffman_Table));
 	compute_huffman_table(Standard_DC_Luminance_NRCodes, Standard_DC_Luminance_Values, m_Y_DC_Huffman_Table);
+	for (int i=0; i<12; ++i) {
+		std::cout << m_Y_DC_Huffman_Table[i].length << ", " << m_Y_DC_Huffman_Table[i].value << std::endl;
+	}
 
 	memset(&m_Y_AC_Huffman_Table, 0, sizeof(m_Y_AC_Huffman_Table));
 	compute_huffman_table(Standard_AC_Luminance_NRCodes, Standard_AC_Luminance_Values, m_Y_AC_Huffman_Table);
