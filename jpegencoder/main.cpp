@@ -8,7 +8,7 @@ int main(int argc, char* argv[]) {
     int height = 512;
     unsigned char* rgb = new unsigned char[width*height*3];
     for (int y=0; y<height; ++y) {
-        for (int x=0; x<height; ++x) {
+        for (int x=0; x<width; ++x) {
             const int idx = y*width+x;
             unsigned char r = (x/4 % 2 + y/4 %2) == 1 ? 255 : 10;
             unsigned char g = (x/4 % 2 + y/4 %2) == 1 ? 0 : 30;

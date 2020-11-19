@@ -363,7 +363,7 @@ void JpegEncoder::rgb_2_yuv_segment(std::shared_ptr<Image> rgb, std::vector<Segm
         for (int iy=y0; iy<y1; ++iy) {
             for (int ix=x0; ix<x1; ++ix) {
 
-                idx = iy*height + ix;
+                idx = iy*width + ix;
                 r = (float)rgb->buffer[idx*3];
                 g = (float)rgb->buffer[idx*3+1];
                 b = (float)rgb->buffer[idx*3+2];

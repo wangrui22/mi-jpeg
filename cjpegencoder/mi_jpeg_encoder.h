@@ -46,6 +46,9 @@ struct Segment {
     Segment():huffman_code_y(nullptr), huffman_code_u(nullptr), huffman_code_v(nullptr),
     huffman_code_y_count(0),huffman_code_u_count(0),huffman_code_v_count(0) {
         memset(rgb, 0, 64*3);
+        for (int i=0; i<64*3; ++i) {
+            rgb[i] = 128;
+        }
         memset(y, 0, 64);
         memset(u, 0, 64);
         memset(v, 0, 64);
