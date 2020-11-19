@@ -91,12 +91,6 @@ public:
     void write_byte_array(const unsigned char* buf, unsigned int buf_len);
     void write_bitstring(const BitString* bs, int counts, int& new_byte, int& new_byte_pos);
 
-
-    //////////////////////////////////////////////////////////////////////////////
-    void foword_fdc(const unsigned char* channel_data, short* fdc_data);
-    void init_quality_tables(int quality_scale);
-    //////////////////////////////////////////////////////////////////////////////
-
 private:
     unsigned char* _compress_buffer;
     unsigned int _compress_capacity;
@@ -109,15 +103,6 @@ private:
 	BitString _huffman_table_Y_AC[256];
 	BitString _huffman_table_CbCr_DC[12];
 	BitString _huffman_table_CbCr_AC[256];
-
-    //////////////////////////////////////////////////////////////////////////////
-    unsigned char	_y_table[64];
-	unsigned char	_cb_cr_table[64];
-	BitString m_Y_DC_Huffman_Table[12];
-	BitString m_Y_AC_Huffman_Table[256];
-	BitString m_CbCr_DC_Huffman_Table[12];
-	BitString m_CbCr_AC_Huffman_Table[256];
-    //////////////////////////////////////////////////////////////////////////////
 };
 
 #endif
