@@ -29,13 +29,13 @@ struct BitString {
 };
 
 struct Segment {
-    unsigned char* rgb;
-    unsigned char* y;
-    unsigned char* u;
-    unsigned char* v;
-    short* quat_y;
-    short* quat_u;
-    short* quat_v;
+    unsigned char rgb[64*3];
+    unsigned char y[64];
+    unsigned char u[64];
+    unsigned char v[64];
+    short quat_y[64];
+    short quat_u[64];
+    short quat_v[64];
     BitString* huffman_code_y;
     BitString* huffman_code_u;
     BitString* huffman_code_v;
@@ -43,40 +43,18 @@ struct Segment {
     int huffman_code_u_count;
     int huffman_code_v_count;
 
-    Segment():rgb(nullptr), y(nullptr), u(nullptr), v(nullptr), 
-    quat_y(nullptr), quat_u(nullptr), quat_v(nullptr),
-    huffman_code_y(nullptr), huffman_code_u(nullptr), huffman_code_v(nullptr),
-    huffman_code_y_count(0),huffman_code_u_count(0),huffman_code_v_count(0) {}
+    Segment():huffman_code_y(nullptr), huffman_code_u(nullptr), huffman_code_v(nullptr),
+    huffman_code_y_count(0),huffman_code_u_count(0),huffman_code_v_count(0) {
+        memset(rgb, 0, 64*3);
+        memset(y, 0, 64);
+        memset(u, 0, 64);
+        memset(v, 0, 64);
+        memset(quat_y, 0, 64*2);
+        memset(quat_u, 0, 64*2);
+        memset(quat_v, 0, 64*2);
+    }
 
     ~Segment() {
-        if (!rgb) {
-            delete [] rgb;
-            rgb = nullptr;
-        }
-        if (!y) {
-            delete [] y;
-            y = nullptr;
-        }
-        if (!u) {
-            delete [] u;
-            u = nullptr;
-        }
-        if (!v) {
-            delete [] v;
-            v = nullptr;
-        }
-        if (!quat_y) {
-            delete [] quat_y;
-            quat_y = nullptr;
-        }
-        if (!quat_u) {
-            delete [] quat_u;
-            quat_u = nullptr;
-        }
-        if (!quat_v) {
-            delete [] quat_v;
-            quat_v = nullptr;
-        }
         if (!huffman_code_y) {
             delete [] huffman_code_y;
             huffman_code_y = nullptr;
@@ -113,6 +91,12 @@ public:
     void write_byte_array(const unsigned char* buf, unsigned int buf_len);
     void write_bitstring(const BitString* bs, int counts, int& new_byte, int& new_byte_pos);
 
+
+    //////////////////////////////////////////////////////////////////////////////
+    void foword_fdc(const unsigned char* channel_data, short* fdc_data);
+    void init_quality_tables(int quality_scale);
+    //////////////////////////////////////////////////////////////////////////////
+
 private:
     unsigned char* _compress_buffer;
     unsigned int _compress_capacity;
@@ -125,6 +109,15 @@ private:
 	BitString _huffman_table_Y_AC[256];
 	BitString _huffman_table_CbCr_DC[12];
 	BitString _huffman_table_CbCr_AC[256];
+
+    //////////////////////////////////////////////////////////////////////////////
+    unsigned char	_y_table[64];
+	unsigned char	_cb_cr_table[64];
+	BitString m_Y_DC_Huffman_Table[12];
+	BitString m_Y_AC_Huffman_Table[256];
+	BitString m_CbCr_DC_Huffman_Table[12];
+	BitString m_CbCr_AC_Huffman_Table[256];
+    //////////////////////////////////////////////////////////////////////////////
 };
 
 #endif

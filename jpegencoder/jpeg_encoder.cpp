@@ -168,11 +168,13 @@ bool JpegEncoder::encode_to_jpeg(unsigned char* rgb, int width, int height, int 
 
 	short prev_DC_Y = 0, prev_DC_Cb = 0, prev_DC_Cr = 0;
 	int newByte=0, newBytePos=7;
-
+	int idx = 0;
 	for(int y_pos=0; y_pos<_height; y_pos+=8) {
 		for (int x_pos=0; x_pos<_width; x_pos+=8) {
 			char y_data[64], cb_data[64], cr_data[64];
 			short yQuant[64], cbQuant[64], crQuant[64];
+
+			++idx;
 
 			//转换颜色空间
 			convert_color_space(x_pos, y_pos, y_data, cb_data, cr_data);
@@ -196,6 +198,8 @@ bool JpegEncoder::encode_to_jpeg(unsigned char* rgb, int width, int height, int 
 			write_bitstring(outputBitString, bitStringCounts, newByte, newBytePos, fp);
 		}
 	}
+
+	std::cout << "segment count : " << idx << std::endl;
 
 	write_word(0xFFD9, fp); //Write End of Image Marker   
 	
@@ -387,9 +391,9 @@ void JpegEncoder::convert_color_space(int x_pos, int y_pos, char* y_data, char* 
 		unsigned char* p = _rgb_buffer + (y+y_pos)*_width*3 + x_pos*3;
 		for (int x=0; x<8; x++)
 		{
-			unsigned char B = *p++;
-			unsigned char G = *p++;
 			unsigned char R = *p++;
+			unsigned char G = *p++;
+			unsigned char B = *p++;
 
 			y_data[y*8+x] = (char)(0.299f * R + 0.587f * G + 0.114f * B - 128);
 			cb_data[y*8+x] = (char)(-0.1687f * R - 0.3313f * G + 0.5f * B );
@@ -494,6 +498,16 @@ void JpegEncoder::write_jpeg_header(FILE* fp)
 	write_byte(0x11, fp);			//HTCbACinfo
 	f_write(Standard_AC_Chrominance_NRCodes, sizeof(Standard_AC_Chrominance_NRCodes), fp);
 	f_write(Standard_AC_Chrominance_Values, sizeof(Standard_AC_Chrominance_Values), fp);
+
+	size_t hdt_len = 
+	sizeof(Standard_DC_Luminance_NRCodes) + 
+	sizeof(Standard_DC_Luminance_Values) +
+	sizeof(Standard_AC_Luminance_NRCodes) + 
+	sizeof(Standard_AC_Luminance_Values) +
+	sizeof(Standard_DC_Chrominance_NRCodes) +
+	sizeof(Standard_DC_Chrominance_Values) +
+	sizeof(Standard_AC_Chrominance_NRCodes) +
+	sizeof(Standard_AC_Chrominance_Values);
 
 	//SOS
 	write_word(0xFFDA, fp);		//marker = 0xFFC4
