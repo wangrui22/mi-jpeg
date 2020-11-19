@@ -10,3 +10,4 @@ project(mi-jpeg)
 
 add_subdirectory(libjpeg)
 add_subdirectory(cjpegencoder)
+add_subdirectory(gjpegencoder)
