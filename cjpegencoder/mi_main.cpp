@@ -25,6 +25,18 @@ int main(int argc, char * argv[]) {
             //return 0;
         }
     }
+
+    // const std::string file = "/home/wangrui22/projects/mi-jpeg/data/img-4000-2400.raw";
+    // const int width = 4000;
+    // const int height = 2400;
+    // std::fstream in(file.c_str(), std::ios::in|std::ios::binary);
+    // if (!in.is_open()) {
+    //     std::cerr << "invalid input rgb\n";
+    //     return -1;
+    // }
+    // unsigned char* rgb = new unsigned char[width*height*3];
+    // in.read((char*)rgb, width*height*3);
+    // in.close();
     
 
     std::shared_ptr<Image> rgb_image(new Image());
@@ -35,8 +47,8 @@ int main(int argc, char * argv[]) {
     JpegEncoder encoder;
     unsigned char* compress_buffer = nullptr;
     unsigned int compress_buffer_len = 0;
-    encoder.compress(rgb_image, 100, compress_buffer, compress_buffer_len);
-    std::ofstream out("/home/wangrui22/projects/mi-jpeg/bin/rgb-512-512.test.jpeg", std::ios::out|std::ios::binary);
+    encoder.compress(rgb_image, 50, compress_buffer, compress_buffer_len);
+    std::ofstream out("/home/wangrui22/projects/mi-jpeg/bin/rgb-4000-512.2400-2.jpeg", std::ios::out|std::ios::binary);
     if (out.is_open()) {
         out.write((char*)compress_buffer, compress_buffer_len);
         out.close();

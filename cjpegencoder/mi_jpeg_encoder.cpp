@@ -272,9 +272,6 @@ void JpegEncoder::init(int quality) {
 	memcpy(_quality_quantization_table_chrominance, default_quantization_chrominance, 64);
 	dct_table_apply_quality(_quality_quantization_table_chrominance, quality);
 	init_qtable(_quality_quantization_table_chrominance, _quantization_table_chrominance);
-	
-    // init_qtable(default_quantization_luminance, _quantization_table_luminance);
-    // init_qtable(default_quantization_chrominance, _quantization_table_chrominance);
 
     //Huffman Table
     compute_huffman_table(bits_dc_luminance, val_dc_luminance, _huffman_table_Y_DC);

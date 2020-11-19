@@ -8,7 +8,5 @@ set (CMAKE_CXX_STANDARD 11)
 
 project(mi-jpeg)
 
-add_subdirectory(cjpeg)
 add_subdirectory(libjpeg)
-add_subdirectory(jpegencoder)
 add_subdirectory(cjpegencoder)
