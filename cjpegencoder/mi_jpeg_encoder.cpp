@@ -3,7 +3,7 @@
 namespace {
 
 /** Default Quantization Table for Y component (zig-zag order)*/
-static unsigned char gpujpeg_table_default_quantization_luminance[64] = { 
+static unsigned char default_quantization_luminance[64] = { 
   16,  11,  12,  14,  12,  10,  16,  14,
   13,  14,  18,  17,  16,  19,  24,  40,
   26,  24,  22,  22,  24,  49,  35,  37,
@@ -15,7 +15,7 @@ static unsigned char gpujpeg_table_default_quantization_luminance[64] = {
 };
 
 /** Default Quantization Table for Cb or Cr component (zig-zag order) */
-static unsigned char gpujpeg_table_default_quantization_chrominance[64] = { 
+static unsigned char default_quantization_chrominance[64] = { 
   17,  18,  18,  24,  21,  24,  47,  26,
   26,  47,  99,  66,  56,  66,  99,  99,
   99,  99,  99,  99,  99,  99,  99,  99,
@@ -239,22 +239,42 @@ inline void write_bitstring(const BitString* bs, int counts, int& new_byte, int&
 	}
 }
 
+inline void dct_table_apply_quality(unsigned char* table_raw, int quality) {
+	int s = (quality < 50) ? (5000 / quality) : (200 - (2 * quality));
+    for ( int i = 0; i < 64; i++ ) {
+        int value = (s * (int)table_raw[i] + 50) / 100;
+        if ( value == 0 ) {
+            value = 1;
+        }
+        if ( value > 255 ) {
+            value = 255;
+        }
+        table_raw[i] = (unsigned char)value;
+    }
+}
 
 }
 
 
 JpegEncoder::JpegEncoder() {
-    init();
 }
 
 JpegEncoder::~JpegEncoder() {
 
 }
 
-void JpegEncoder::init() {
+void JpegEncoder::init(int quality) {
     //DCT table
-    init_qtable(gpujpeg_table_default_quantization_luminance, _quantization_table_luminance);
-    init_qtable(gpujpeg_table_default_quantization_chrominance, _quantization_table_chrominance);
+	memcpy(_quality_quantization_table_luminance, default_quantization_luminance, 64);
+	dct_table_apply_quality(_quality_quantization_table_luminance, quality);
+	init_qtable(_quality_quantization_table_luminance, _quantization_table_luminance);
+
+	memcpy(_quality_quantization_table_chrominance, default_quantization_chrominance, 64);
+	dct_table_apply_quality(_quality_quantization_table_chrominance, quality);
+	init_qtable(_quality_quantization_table_chrominance, _quantization_table_chrominance);
+	
+    // init_qtable(default_quantization_luminance, _quantization_table_luminance);
+    // init_qtable(default_quantization_chrominance, _quantization_table_chrominance);
 
     //Huffman Table
     compute_huffman_table(bits_dc_luminance, val_dc_luminance, _huffman_table_Y_DC);
@@ -264,7 +284,9 @@ void JpegEncoder::init() {
     compute_huffman_table(bits_ac_chrominance, val_ac_chrominance, _huffman_table_CbCr_AC);
 }
 
-int JpegEncoder::compress(std::shared_ptr<Image> rgb, unsigned char*& compress_buffer, unsigned int& buffer_len) {  
+int JpegEncoder::compress(std::shared_ptr<Image> rgb, int quality, unsigned char*& compress_buffer, unsigned int& buffer_len) {  
+	init(quality);
+
     write_jpeg_header(rgb);
 
     std::vector<Segment> segments;
@@ -520,10 +542,10 @@ void JpegEncoder::write_jpeg_header(std::shared_ptr<Image> rgb) {
 	write_byte(0);			//QTYinfo== 0:  bit 0..3: number of QT = 0 (table for Y) 
 									//				bit 4..7: precision of QT
 									//				bit 8	: 0
-	
-    write_byte_array(gpujpeg_table_default_quantization_luminance, 64);		//YTable
+
+	write_byte_array(_quality_quantization_table_luminance, 64);		//YTable
 	write_byte(1);			//QTCbinfo = 1 (quantization table for Cb,Cr)
-	write_byte_array(gpujpeg_table_default_quantization_chrominance, 64);	//CbCrTable
+	write_byte_array(_quality_quantization_table_chrominance, 64);	//CbCrTable
 
 	//SOFO
 	write_word(0xFFC0);			//marker = 0xFFC0

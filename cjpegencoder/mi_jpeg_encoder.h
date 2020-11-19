@@ -74,10 +74,10 @@ class JpegEncoder {
 public:
     JpegEncoder();
     ~JpegEncoder();
-    int compress(std::shared_ptr<Image> rgb, unsigned char*& compress_buffer, unsigned int& buffer_len);
+    int compress(std::shared_ptr<Image> rgb, int quality, unsigned char*& compress_buffer, unsigned int& buffer_len);
     
 public:
-    void init();
+    void init(int quality);
 
     void rgb_2_yuv_segment(std::shared_ptr<Image> rgb, std::vector<Segment>& segments);
     
@@ -95,6 +95,9 @@ private:
     unsigned char* _compress_buffer;
     unsigned int _compress_capacity;
     unsigned int _compress_byte;
+
+    unsigned char _quality_quantization_table_luminance[64];
+    unsigned char _quality_quantization_table_chrominance[64];
 
     float _quantization_table_luminance[64];
     float _quantization_table_chrominance[64];

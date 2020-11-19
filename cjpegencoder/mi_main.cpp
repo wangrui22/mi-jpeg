@@ -35,7 +35,7 @@ int main(int argc, char * argv[]) {
     JpegEncoder encoder;
     unsigned char* compress_buffer = nullptr;
     unsigned int compress_buffer_len = 0;
-    encoder.compress(rgb_image, compress_buffer, compress_buffer_len);
+    encoder.compress(rgb_image, 100, compress_buffer, compress_buffer_len);
     std::ofstream out("/home/wangrui22/projects/mi-jpeg/bin/rgb-512-512.test.jpeg", std::ios::out|std::ios::binary);
     if (out.is_open()) {
         out.write((char*)compress_buffer, compress_buffer_len);
