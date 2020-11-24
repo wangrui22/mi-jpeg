@@ -7,7 +7,7 @@ extern "C"
 cudaError_t rgb_2_yuv_2_dct(const BlockUnit& rgb, const BlockUnit& dct_result, const ImageInfo& img_info, const DCTTable& dct_table);
 
 extern "C"
-cudaError_t huffman_encode(const BlockUnit& dct_result, const BlockUnit& huffman_code, int *d_huffman_code_count, const ImageInfo& img_info, const HuffmanTable& huffman_table);
+cudaError_t huffman_encoding(const BlockUnit& dct_result, const BlockUnit& huffman_code, int *d_huffman_code_count, const ImageInfo& img_info, const HuffmanTable& huffman_table);
 
 namespace {
 /** Default Quantization Table for Y component (zig-zag order)*/
@@ -153,6 +153,59 @@ inline void compute_huffman_table(const unsigned char* bit_val_count_array, cons
 	}
 }
 
+const static unsigned int BASIC_BYTE = 1024*1024*2;
+
+inline void write_word(unsigned short val, unsigned char* buffer, unsigned int& byte) {
+    unsigned short val0 = ((val>>8)&0xFF) | ((val&0xFF)<<8);
+    *((unsigned short*)buffer) = val0;
+    byte += 2;
+}
+
+inline void write_byte(unsigned char val, unsigned char* buffer, unsigned int& byte) {
+    *buffer = val;
+    byte += 1;
+}
+
+inline void write_byte_array(const unsigned char* buf, unsigned int buf_len, unsigned char* buffer, unsigned int& byte) {
+    memcpy(buffer, buf, buf_len);
+    byte += buf_len;
+}
+
+inline void write_bitstring(const BitString* bs, int counts, int& new_byte, int& new_byte_pos, unsigned char* buffer, unsigned int& byte)
+{
+	const unsigned short mask[] = {1,2,4,8,16,32,64,128,256,512,1024,2048,4096,8192,16384,32768};
+	
+	for(int i=0; i<counts; ++i)
+	{
+		int value = bs[i].value;
+		int posval = bs[i].length - 1;
+
+		while (posval >= 0)
+		{
+			if ((value & mask[posval]) != 0)
+			{
+				new_byte = new_byte  | mask[new_byte_pos];
+			}
+			posval--;
+			new_byte_pos--;
+			if (new_byte_pos < 0)
+			{
+				// Write to stream
+				::write_byte((unsigned char)(new_byte), buffer++, byte);
+				if (new_byte == 0xFF)
+				{
+					// Handle special case
+					::write_byte((unsigned char)(0x00), buffer++, byte);
+				}
+
+				// Reinitialize
+				new_byte_pos = 7;
+				new_byte = 0;
+			}
+		}
+	}
+}
+
 }
 
 CudaTimeQuery::CudaTimeQuery() {
@@ -292,7 +345,7 @@ int GPUJpegEncoder::compress(std::shared_ptr<Image> rgb, int quality, unsigned c
     err = cudaMemset(_huffman_result.d_buffer, 0, _huffman_result.length);
     CHECK_CUDA_ERROR(err)
 
-    err = cudaMalloc(&_d_huffman_code_count, _img_info.mcu_w*_img_info.mcu_h*sizeof(int));
+    err = cudaMalloc(&_d_huffman_code_count, _img_info.mcu_w*_img_info.mcu_h*3*sizeof(int));
     CHECK_CUDA_ERROR(err)
     
 
@@ -317,12 +370,177 @@ int GPUJpegEncoder::compress(std::shared_ptr<Image> rgb, int quality, unsigned c
     {
         CudaTimeQuery t0;
         t0.begin();
-        err = huffman_encode(_dct_result, _huffman_result, _d_huffman_code_count, _img_info, _huffman_table);
+        err = huffman_encoding(_dct_result, _huffman_result, _d_huffman_code_count, _img_info, _huffman_table);
         CHECK_CUDA_ERROR(err)
         
         std::cout << "huffman_encode cost: " << t0.end() << " ms\n";
     }
-    
+
+    write_jpeg_header(quality);
+
+    write_jpeg_segment();
+
+    write_word(0xFFD9); //Write End of Image Marker  
+
+    buffer_len = _compress_byte;
+    compress_buffer = new unsigned char[buffer_len];
+    memcpy(compress_buffer, _compress_buffer, _compress_byte);
 
     return 0;
+}
+
+void GPUJpegEncoder::write_word(unsigned short val) {
+    ::write_word(val, _compress_buffer+_compress_byte, _compress_byte);
+}
+
+void GPUJpegEncoder::write_byte(unsigned char val) {
+    ::write_byte(val, _compress_buffer+_compress_byte, _compress_byte);
+}
+
+void GPUJpegEncoder::write_byte_array(const unsigned char* buf, unsigned int buf_len) {
+    ::write_byte_array(buf, buf_len, _compress_buffer+_compress_byte, _compress_byte);
+}
+
+void GPUJpegEncoder::write_bitstring(const BitString* bs, int counts, int& new_byte, int& new_byte_pos) {
+    ::write_bitstring(bs, counts, new_byte, new_byte_pos, _compress_buffer+_compress_byte, _compress_byte);
+}
+
+void GPUJpegEncoder::write_jpeg_header(int quality) {
+    _compress_capacity = BASIC_BYTE;
+    _compress_byte = 0;
+    _compress_buffer = new unsigned char[_compress_capacity];
+    
+    //SOI
+	write_word(0xFFD8);		// marker = 0xFFD8
+
+	//APPO
+	write_word(0xFFE0);		// marker = 0xFFE0
+	write_word(16);			// length = 16 for usual JPEG, no thumbnail
+    unsigned char JFIF[5];
+    JFIF[0] = 'J';
+    JFIF[1] = 'F';
+    JFIF[2] = 'I';
+    JFIF[3] = 'F';
+    JFIF[4] = '\0';
+	write_byte_array(JFIF, 5);			// 'JFIF\0'
+	write_byte(1);			// version_hi
+	write_byte(1);			// version_low
+	write_byte(0);			// xyunits = 0 no units, normal density
+	write_word(1);			// xdensity
+	write_word(1);			// ydensity
+	write_byte(0);			// thumbWidth
+	write_byte(0);			// thumbHeight
+
+	//DQT
+	write_word(0xFFDB);		//marker = 0xFFDB
+	write_word(132);			//size=132
+	write_byte(0);			//QTYinfo== 0:  bit 0..3: number of QT = 0 (table for Y) 
+									//				bit 4..7: precision of QT
+									//				bit 8	: 0
+
+	write_byte_array(_dct_table[quality].quant_tbl_luminance, 64);		//YTable
+	write_byte(1);			//QTCbinfo = 1 (quantization table for Cb,Cr)
+	write_byte_array(_dct_table[quality].quant_tbl_chrominance, 64);	//CbCrTable
+
+	//SOFO
+	write_word(0xFFC0);			//marker = 0xFFC0
+	write_word(17);				//length = 17 for a truecolor YCbCr JPG
+	write_byte(8);				//precision = 8: 8 bits/sample 
+	write_word(_img_info.height&0xFFFF);	//height
+	write_word(_img_info.width&0xFFFF);	//width
+	write_byte(3);				//nrofcomponents = 3: We encode a truecolor JPG
+
+	write_byte(1);				//IdY = 1
+	write_byte(0x11);				//HVY sampling factors for Y (bit 0-3 vert., 4-7 hor.)(SubSamp 1x1)
+	write_byte(0);				//QTY  Quantization Table number for Y = 0
+
+	write_byte(2);				//IdCb = 2
+	write_byte(0x11);				//HVCb = 0x11(SubSamp 1x1)
+	write_byte(1);				//QTCb = 1
+
+	write_byte(3);				//IdCr = 3
+	write_byte(0x11);				//HVCr = 0x11 (SubSamp 1x1)
+	write_byte(1);				//QTCr Normally equal to QTCb = 1
+	
+	//DHT
+    int hdt_len = (int)(
+	sizeof(BITS_DC_LUMINANCE) + 
+	sizeof(VAL_DC_LUMINANCE) +
+	sizeof(BITS_AC_LUMINANCE) + 
+	sizeof(VAL_AC_LUMINANCE) +
+	sizeof(BITS_DC_CHROMINANCE) + 
+	sizeof(VAL_DC_CHROMINANCE) +
+	sizeof(BITS_AC_CHROMINANCE) + 
+	sizeof(VAL_AC_CHROMINANCE) + 6);
+
+	write_word(0xFFC4);		//marker = 0xFFC4
+	//write_word(0x01A2);		//length = 0x01A2
+    write_word(hdt_len);		//length = 0x01A2
+	write_byte(0);			//HTYDCinfo bit 0..3	: number of HT (0..3), for Y =0
+									//			bit 4		: type of HT, 0 = DC table,1 = AC table
+									//			bit 5..7	: not used, must be 0
+	write_byte_array(BITS_DC_LUMINANCE, sizeof(BITS_DC_LUMINANCE));	//DC_L_NRC
+	write_byte_array(VAL_DC_LUMINANCE, sizeof(VAL_DC_LUMINANCE));		//DC_L_VALUE
+	write_byte(0x10);			//HTYACinfo
+	write_byte_array(BITS_AC_LUMINANCE, sizeof(BITS_AC_LUMINANCE));
+	write_byte_array(VAL_AC_LUMINANCE, sizeof(VAL_AC_LUMINANCE)); //we'll use the standard Huffman tables
+	write_byte(0x01);			//HTCbDCinfo
+	write_byte_array(BITS_DC_CHROMINANCE, sizeof(BITS_DC_CHROMINANCE));
+	write_byte_array(VAL_DC_CHROMINANCE, sizeof(VAL_DC_CHROMINANCE));
+	write_byte(0x11);			//HTCbACinfo
+	write_byte_array(BITS_AC_CHROMINANCE, sizeof(BITS_AC_CHROMINANCE));
+	write_byte_array(VAL_AC_CHROMINANCE, sizeof(VAL_AC_CHROMINANCE));
+
+	//SOS
+	write_word(0xFFDA);		//marker = 0xFFC4
+	write_word(12);			//length = 12
+	write_byte(3);			//nrofcomponents, Should be 3: truecolor JPG
+
+	write_byte(1);			//Idy=1
+	write_byte(0);			//HTY	bits 0..3: AC table (0..3)
+									//		bits 4..7: DC table (0..3)
+	write_byte(2);			//IdCb
+	write_byte(0x11);			//HTCb
+
+	write_byte(3);			//IdCr
+	write_byte(0x11);			//HTCr
+
+	write_byte(0);			//Ss not interesting, they should be 0,63,0
+	write_byte(0x3F);			//Se
+	write_byte(0);			//Bf
+}
+
+void GPUJpegEncoder::write_jpeg_segment() {
+    // _huffman_result.length = _img_info.mcu_w*_img_info.mcu_h*128*sizeof(BitString)*3;
+    // err = cudaMalloc(&_huffman_result.d_buffer, _huffman_result.length);
+    // CHECK_CUDA_ERROR(err)
+    // err = cudaMemset(_huffman_result.d_buffer, 0, _huffman_result.length);
+    // CHECK_CUDA_ERROR(err)
+
+    // err = cudaMalloc(&_d_huffman_code_count, _img_info.mcu_w*_img_info.mcu_h*sizeof(int));
+    // CHECK_CUDA_ERROR(err)
+
+    BitString* huffman_code = new BitString[_img_info.mcu_w*_img_info.mcu_h*128*3];
+    int* huffman_code_count = new int[_img_info.mcu_w*_img_info.mcu_h*3];
+    cudaError_t err = cudaSuccess;
+
+    err = cudaMemcpy(huffman_code, _huffman_result.d_buffer, _img_info.mcu_w*_img_info.mcu_h*128*3*sizeof(BitString), cudaMemcpyDefault);
+    CHECK_CUDA_ERROR(err)
+    err = cudaMemcpy(huffman_code_count, _d_huffman_code_count, _img_info.mcu_w*_img_info.mcu_h*3*sizeof(int), cudaMemcpyDefault);
+    CHECK_CUDA_ERROR(err)
+
+    int new_byte=0, new_byte_pos=7;
+    for (int i=0; i<_img_info.segment_count; ++i) {
+        BitString* huffman_code_seg = huffman_code+128*3*i;
+        int* huffman_code_count_seg = huffman_code_count+3*i;
+        write_bitstring(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos);
+        huffman_code_seg += 128;
+        huffman_code_count_seg += 1;
+        write_bitstring(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos);
+        huffman_code_seg += 128;
+        huffman_code_count_seg += 1;
+        write_bitstring(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos);
+    }
+
+
 }

@@ -38,10 +38,12 @@ public:
     int compress(std::shared_ptr<Image> rgb, int quality, unsigned char*& compress_buffer, unsigned int& buffer_len);
     
 public:
-    // void dct();
-    // void huffman_encode();
+    void write_word(unsigned short val);
+    void write_byte(unsigned char val);
+    void write_byte_array(const unsigned char* buf, unsigned int buf_len);
+    void write_bitstring(const BitString* bs, int counts, int& new_byte, int& new_byte_pos);
 
-    void write_jpeg_header();
+    void write_jpeg_header(int quality);
     void write_jpeg_segment();
 
 private:

@@ -211,7 +211,7 @@ __shared__ BitString _S_huffman_table_Y_AC[256];
 __shared__ BitString _S_huffman_table_CbCr_DC[12];
 __shared__ BitString _S_huffman_table_CbCr_AC[256];
 
-__global__ void kernel_huffman_encode(const BlockUnit dct_result, const BlockUnit huffman_code, int *d_huffman_code_count, const ImageInfo img_info, const HuffmanTable huffman_table) {
+__global__ void kernel_huffman_encoding(const BlockUnit dct_result, const BlockUnit huffman_code, int *d_huffman_code_count, const ImageInfo img_info, const HuffmanTable huffman_table) {
     unsigned int mcu_x = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned int mcu_y = blockIdx.y * blockDim.y + threadIdx.y;
     if (mcu_x > img_info.mcu_w-1 || mcu_y > img_info.mcu_h-1) {
@@ -353,7 +353,7 @@ cudaError_t rgb_2_yuv_2_dct(const BlockUnit& rgb, const BlockUnit& dct_result, c
 }
 
 extern "C"
-cudaError_t huffman_encode(const BlockUnit& dct_result, const BlockUnit& huffman_code, int *d_huffman_code_count, const ImageInfo& img_info, const HuffmanTable& huffman_table) {
+cudaError_t huffman_encoding(const BlockUnit& dct_result, const BlockUnit& huffman_code, int *d_huffman_code_count, const ImageInfo& img_info, const HuffmanTable& huffman_table) {
     const int BLOCK_SIZEX = 4;
     const int BLOCK_SIZEY = 4;
     dim3 block(BLOCK_SIZEX, BLOCK_SIZEY, 1);
@@ -365,7 +365,7 @@ cudaError_t huffman_encode(const BlockUnit& dct_result, const BlockUnit& huffman
         grid.y += 1;
     }
 
-    kernel_huffman_encode << <grid, block >> >(dct_result, huffman_code, d_huffman_code_count, img_info, huffman_table);
+    kernel_huffman_encoding << <grid, block >> >(dct_result, huffman_code, d_huffman_code_count, img_info, huffman_table);
     
     return cudaDeviceSynchronize();
 }

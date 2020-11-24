@@ -3,8 +3,8 @@
 
 int main(int argc, char * argv[]) {
 
-    int width = 520;
-    int height = 518;
+    int width = 1024;
+    int height = 1024;
     unsigned char* rgb = new unsigned char[width*height*3];
     for (int y=0; y<height; ++y) {
         for (int x=0; x<width; ++x) {
