@@ -14,6 +14,20 @@ private:
     std::vector<BlockUnit> _blocks;
 };
 
+class CudaTimeQuery
+{
+public:
+    CudaTimeQuery();
+    ~CudaTimeQuery();
+
+    void begin();
+    float end();
+
+private:
+    cudaEvent_t _start;
+    cudaEvent_t _end;
+    float _time_elapsed;
+};
 
 
 class GPUJpegEncoder {    
@@ -24,8 +38,8 @@ public:
     int compress(std::shared_ptr<Image> rgb, int quality, unsigned char*& compress_buffer, unsigned int& buffer_len);
     
 public:
-    void dct();
-    void huffman_encode();
+    // void dct();
+    // void huffman_encode();
 
     void write_jpeg_header();
     void write_jpeg_segment();
@@ -48,8 +62,10 @@ private:
 	BitString _huffman_table_Y_AC[256];
 	BitString _huffman_table_CbCr_DC[12];
 	BitString _huffman_table_CbCr_AC[256];
+    HuffmanTable _huffman_table;
 
     BlockUnit _huffman_result;
+    int *_d_huffman_code_count;
 };
 
 #endif

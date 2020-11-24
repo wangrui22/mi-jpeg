@@ -92,6 +92,7 @@ struct DCTTable {
     unsigned char quant_tbl_chrominance[64];
     float *d_quant_tbl_luminance;//[64]
     float *d_quant_tbl_chrominance;//[64]
+    unsigned char *d_zig_zag;//[64]
 };
 
 struct HuffmanTable {

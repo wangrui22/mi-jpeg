@@ -2,8 +2,8 @@
 #include <fstream>
 
 int main(int argc, char *argv[]) {
-    int width = 520;
-    int height = 518;
+    int width = 1024;
+    int height = 1024;
     unsigned char* rgb = new unsigned char[width*height*3];
     for (int y=0; y<height; ++y) {
         for (int x=0; x<width; ++x) {
@@ -29,8 +29,12 @@ int main(int argc, char *argv[]) {
     rgb_image->buffer = rgb;
     rgb_image->width = width;
     rgb_image->height = height;
-    
+
+    std::vector<int> qualitys;
+    qualitys.push_back(50);
+    qualitys.push_back(100);
     GPUJpegEncoder encoder;
+    encoder.init(qualitys);
     unsigned char* compress_buffer = nullptr;
     unsigned int compress_buffer_len = 0;
     encoder.compress(rgb_image, 50, compress_buffer, compress_buffer_len);

@@ -3,6 +3,12 @@
 extern "C" 
 cudaError_t rgb_2_yuv(const BlockUnit& rgb, const BlockUnit& yuv, const ImageInfo& img_info);
 
+extern "C" 
+cudaError_t rgb_2_yuv_2_dct(const BlockUnit& rgb, const BlockUnit& dct_result, const ImageInfo& img_info, const DCTTable& dct_table);
+
+extern "C"
+cudaError_t huffman_encode(const BlockUnit& dct_result, const BlockUnit& huffman_code, int *d_huffman_code_count, const ImageInfo& img_info, const HuffmanTable& huffman_table);
+
 namespace {
 /** Default Quantization Table for Y component (zig-zag order)*/
 const unsigned char DEFAULT_QUANTIZATION_LUMINANCE[64] = { 
@@ -133,6 +139,49 @@ inline void init_qtable(unsigned char (&qt_raw)[64], float (&qt)[64]) {
     }
 }
 
+inline void compute_huffman_table(const unsigned char* bit_val_count_array, const unsigned char* val_array, BitString* huffman_table) {
+	int pos_in_table = 0;
+	unsigned short code_value = 0;
+	for(int bit = 1; bit <= 16; ++bit) {
+		for(int val_count = 0; val_count < bit_val_count_array[bit-1]; ++val_count){
+			huffman_table[val_array[pos_in_table]].value = code_value;
+			huffman_table[val_array[pos_in_table]].length = bit;
+			pos_in_table++;
+			code_value++;
+		}
+		code_value <<= 1;
+	}
+}
+
+}
+
+CudaTimeQuery::CudaTimeQuery() {
+}
+
+CudaTimeQuery::~CudaTimeQuery() {
+}
+
+void CudaTimeQuery::begin() {
+    cudaError err = cudaEventCreate(&_start);
+    CHECK_CUDA_ERROR(err);
+    err = cudaEventRecord(_start, 0);
+    CHECK_CUDA_ERROR(err);
+}
+
+float CudaTimeQuery::end() {
+    cudaError err = cudaEventCreate(&_end);
+    CHECK_CUDA_ERROR(err);
+    err = cudaEventRecord(_end, 0);
+    CHECK_CUDA_ERROR(err);
+    err = cudaEventSynchronize(_end);
+    CHECK_CUDA_ERROR(err);
+    err = cudaEventElapsedTime(&_time_elapsed, _start, _end);
+    CHECK_CUDA_ERROR(err);
+    err = cudaEventDestroy(_start);
+    CHECK_CUDA_ERROR(err);
+    err = cudaEventDestroy(_end);
+    CHECK_CUDA_ERROR(err);
+    return _time_elapsed;
 }
 
 GPUJpegEncoder::GPUJpegEncoder() {
@@ -169,11 +218,41 @@ int GPUJpegEncoder::init(std::vector<int> qualitys) {
         CHECK_CUDA_ERROR(err)
         err = cudaMalloc(&dct_table.d_quant_tbl_chrominance, 64*sizeof(float));
         CHECK_CUDA_ERROR(err)
-        err = cudaMemcpy(dct_table.d_quant_tbl_luminance, tbl_luminance ,64*sizeof(float), cudaMemcpyDefault);
+        err = cudaMemcpy(dct_table.d_quant_tbl_chrominance, tbl_luminance ,64*sizeof(float), cudaMemcpyDefault);
+        CHECK_CUDA_ERROR(err)
+
+        err = cudaMalloc(&dct_table.d_zig_zag, 64);
+        CHECK_CUDA_ERROR(err)
+        err = cudaMemcpy(dct_table.d_zig_zag, ZIGZAG_TABLE ,64, cudaMemcpyDefault);
         CHECK_CUDA_ERROR(err)
 
         _dct_table[quality] = dct_table;
     }
+
+    compute_huffman_table(BITS_DC_LUMINANCE, VAL_DC_LUMINANCE, _huffman_table_Y_DC);
+    compute_huffman_table(BITS_AC_LUMINANCE, VAL_AC_LUMINANCE, _huffman_table_Y_AC);
+    compute_huffman_table(BITS_DC_CHROMINANCE, VAL_DC_CHROMINANCE, _huffman_table_CbCr_DC);
+    compute_huffman_table(BITS_AC_CHROMINANCE, VAL_AC_CHROMINANCE, _huffman_table_CbCr_AC);
+
+    err = cudaMalloc(&_huffman_table.d_huffman_table_Y_DC, sizeof(_huffman_table_Y_DC));
+    CHECK_CUDA_ERROR(err)
+    err = cudaMemcpy(_huffman_table.d_huffman_table_Y_DC, _huffman_table_Y_DC, sizeof(_huffman_table_Y_DC), cudaMemcpyDefault);
+    CHECK_CUDA_ERROR(err)
+
+    err = cudaMalloc(&_huffman_table.d_huffman_table_Y_AC, sizeof(_huffman_table_Y_AC));
+    CHECK_CUDA_ERROR(err)
+    err = cudaMemcpy(_huffman_table.d_huffman_table_Y_AC, _huffman_table_Y_AC, sizeof(_huffman_table_Y_AC), cudaMemcpyDefault);
+    CHECK_CUDA_ERROR(err)
+
+    err = cudaMalloc(&_huffman_table.d_huffman_table_CbCr_DC, sizeof(_huffman_table_CbCr_DC));
+    CHECK_CUDA_ERROR(err)
+    err = cudaMemcpy(_huffman_table.d_huffman_table_CbCr_DC, _huffman_table_CbCr_DC, sizeof(_huffman_table_CbCr_DC), cudaMemcpyDefault);
+    CHECK_CUDA_ERROR(err)
+
+    err = cudaMalloc(&_huffman_table.d_huffman_table_CbCr_AC, sizeof(_huffman_table_CbCr_AC));
+    CHECK_CUDA_ERROR(err)
+    err = cudaMemcpy(_huffman_table.d_huffman_table_CbCr_AC, _huffman_table_CbCr_AC, sizeof(_huffman_table_CbCr_AC), cudaMemcpyDefault);
+    CHECK_CUDA_ERROR(err)
 
     return 0;
 }
@@ -200,8 +279,50 @@ int GPUJpegEncoder::compress(std::shared_ptr<Image> rgb, int quality, unsigned c
     err = cudaMemset(_yuv_ext.d_buffer, 0, _yuv_ext.length);
     CHECK_CUDA_ERROR(err)
 
-    err = rgb_2_yuv(_raw_rgb, _yuv_ext, _img_info);
+
+    _dct_result.length =_img_info.mcu_w*_img_info.mcu_h*64*3*sizeof(short);
+    err = cudaMalloc(&_dct_result.d_buffer, _dct_result.length);
     CHECK_CUDA_ERROR(err)
+    err = cudaMemset(_dct_result.d_buffer, 0, _dct_result.length);
+    CHECK_CUDA_ERROR(err)
+
+    _huffman_result.length = _img_info.mcu_w*_img_info.mcu_h*128*sizeof(BitString)*3;
+    err = cudaMalloc(&_huffman_result.d_buffer, _huffman_result.length);
+    CHECK_CUDA_ERROR(err)
+    err = cudaMemset(_huffman_result.d_buffer, 0, _huffman_result.length);
+    CHECK_CUDA_ERROR(err)
+
+    err = cudaMalloc(&_d_huffman_code_count, _img_info.mcu_w*_img_info.mcu_h*sizeof(int));
+    CHECK_CUDA_ERROR(err)
+    
+
+    // {
+    //     CudaTimeQuery t0;
+    //     t0.begin();
+    //     err = rgb_2_yuv(_raw_rgb, _yuv_ext, _img_info);
+    //     CHECK_CUDA_ERROR(err)
+        
+    //     std::cout << "rgb_2_yuv cost: " << t0.end() << " ms\n";
+    // }
+
+    {
+        CudaTimeQuery t0;
+        t0.begin();
+        err = rgb_2_yuv_2_dct(_raw_rgb, _dct_result, _img_info, _dct_table[quality]);
+        CHECK_CUDA_ERROR(err)
+        
+        std::cout << "rgb_2_yuv_2_dct cost: " << t0.end() << " ms\n";
+    }
+
+    {
+        CudaTimeQuery t0;
+        t0.begin();
+        err = huffman_encode(_dct_result, _huffman_result, _d_huffman_code_count, _img_info, _huffman_table);
+        CHECK_CUDA_ERROR(err)
+        
+        std::cout << "huffman_encode cost: " << t0.end() << " ms\n";
+    }
+    
 
     return 0;
 }
