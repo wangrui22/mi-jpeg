@@ -91,12 +91,24 @@ __device__ void dct_1d_8_fast(const T0 in0, const T0 in1, const T0 in2, const T0
 }
 
 
+__shared__ unsigned char _S_ZIG_ZAG[64];
+__shared__ float _S_DCT_TABLE[128];
+
 __global__ void kernel_rgb_2_yuv_2_dct(const BlockUnit rgb, const BlockUnit dct_result, const ImageInfo img_info, const DCTTable dct_table) {
     unsigned int mcu_x = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned int mcu_y = blockIdx.y * blockDim.y + threadIdx.y;
     if (mcu_x > img_info.mcu_w-1 || mcu_y > img_info.mcu_h-1) {
         return;
     }
+    if (threadIdx.x == 0) {
+        for (int i=0; i<64; ++i) {
+            _S_ZIG_ZAG[i] = dct_table.d_zig_zag[i];
+            _S_DCT_TABLE[i] = dct_table.d_quant_tbl_luminance[i];
+            _S_DCT_TABLE[i+64] = dct_table.d_quant_tbl_chrominance[i];
+        }
+    }
+    __syncthreads();
+
     int mcu_id = mcu_y*img_info.mcu_w + mcu_x;
 
     int width = img_info.width;
@@ -143,8 +155,10 @@ __global__ void kernel_rgb_2_yuv_2_dct(const BlockUnit rgb, const BlockUnit dct_
 
     float quant_local[64];
     short *quant_base = (short*)dct_result.d_buffer + mcu_id*64*3;
-    float *tbls[3] = {dct_table.d_quant_tbl_luminance, dct_table.d_quant_tbl_chrominance, dct_table.d_quant_tbl_chrominance};
-    unsigned char* ZIGZAG_TABLE = dct_table.d_zig_zag;
+    // float *tbls[3] = {dct_table.d_quant_tbl_luminance, dct_table.d_quant_tbl_chrominance, dct_table.d_quant_tbl_chrominance};
+    // unsigned char* ZIGZAG_TABLE = dct_table.d_zig_zag;
+    float *tbls[3] = {_S_DCT_TABLE, _S_DCT_TABLE+64, _S_DCT_TABLE+64};
+    unsigned char* ZIGZAG_TABLE = _S_ZIG_ZAG;
 
     for (int j=0; j<3; ++j) {
         short *quant_val = quant_base + 64*j;
@@ -191,12 +205,31 @@ __device__ BitString get_bit_code(int value) {
 	return ret;
 }
 
+
+__shared__ BitString _S_huffman_table_Y_DC[12];
+__shared__ BitString _S_huffman_table_Y_AC[256];
+__shared__ BitString _S_huffman_table_CbCr_DC[12];
+__shared__ BitString _S_huffman_table_CbCr_AC[256];
+
 __global__ void kernel_huffman_encode(const BlockUnit dct_result, const BlockUnit huffman_code, int *d_huffman_code_count, const ImageInfo img_info, const HuffmanTable huffman_table) {
     unsigned int mcu_x = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned int mcu_y = blockIdx.y * blockDim.y + threadIdx.y;
     if (mcu_x > img_info.mcu_w-1 || mcu_y > img_info.mcu_h-1) {
         return;
     }
+    // if (threadIdx.x == 0) {
+    //     for (int i=0; i<12; ++i) {
+    //         _S_huffman_table_Y_DC[i] = huffman_table.d_huffman_table_Y_DC[i];
+    //         _S_huffman_table_CbCr_DC[i] = huffman_table.d_huffman_table_CbCr_DC[i];
+    //     }
+    //     for (int i=0; i<256; ++i) {
+    //         _S_huffman_table_Y_AC[i] = huffman_table.d_huffman_table_Y_AC[i];
+    //         _S_huffman_table_CbCr_AC[i] = huffman_table.d_huffman_table_CbCr_AC[i];
+    //     }
+        
+    // }
+    // __syncthreads();
+
     int mcu_id = mcu_y*img_info.mcu_w + mcu_x;
 
     int width = img_info.width;
@@ -214,6 +247,9 @@ __global__ void kernel_huffman_encode(const BlockUnit dct_result, const BlockUni
 
     BitString* HTDCs[3] = {huffman_table.d_huffman_table_Y_DC, huffman_table.d_huffman_table_CbCr_DC, huffman_table.d_huffman_table_CbCr_DC};
     BitString* HTACs[3] = {huffman_table.d_huffman_table_Y_AC, huffman_table.d_huffman_table_CbCr_AC, huffman_table.d_huffman_table_CbCr_AC};
+    // BitString* HTDCs[3] = {_S_huffman_table_Y_DC, _S_huffman_table_CbCr_DC, _S_huffman_table_CbCr_DC};
+    // BitString* HTACs[3] = {_S_huffman_table_Y_AC, _S_huffman_table_CbCr_AC, _S_huffman_table_CbCr_AC};
+
     short *quant_base = (short*)dct_result.d_buffer + mcu_id*64*3;
     BitString* output_base = (BitString*)huffman_code.d_buffer + mcu_id*128*3;
     int* output_count = d_huffman_code_count + mcu_id*3;
@@ -300,8 +336,8 @@ cudaError_t rgb_2_yuv(const BlockUnit& rgb, const BlockUnit& yuv, const ImageInf
 
 extern "C"
 cudaError_t rgb_2_yuv_2_dct(const BlockUnit& rgb, const BlockUnit& dct_result, const ImageInfo& img_info, const DCTTable& dct_table) {
-    const int BLOCK_SIZEX = 2;
-    const int BLOCK_SIZEY = 8;
+    const int BLOCK_SIZEX = 4;
+    const int BLOCK_SIZEY = 4;
     dim3 block(BLOCK_SIZEX, BLOCK_SIZEY, 1);
     dim3 grid(img_info.mcu_w / BLOCK_SIZEX, img_info.mcu_h / BLOCK_SIZEY);
     if (grid.x * BLOCK_SIZEX != img_info.mcu_w) {
@@ -318,8 +354,8 @@ cudaError_t rgb_2_yuv_2_dct(const BlockUnit& rgb, const BlockUnit& dct_result, c
 
 extern "C"
 cudaError_t huffman_encode(const BlockUnit& dct_result, const BlockUnit& huffman_code, int *d_huffman_code_count, const ImageInfo& img_info, const HuffmanTable& huffman_table) {
-    const int BLOCK_SIZEX = 2;
-    const int BLOCK_SIZEY = 8;
+    const int BLOCK_SIZEX = 4;
+    const int BLOCK_SIZEY = 4;
     dim3 block(BLOCK_SIZEX, BLOCK_SIZEY, 1);
     dim3 grid(img_info.mcu_w / BLOCK_SIZEX, img_info.mcu_h / BLOCK_SIZEY);
     if (grid.x * BLOCK_SIZEX != img_info.mcu_w) {
