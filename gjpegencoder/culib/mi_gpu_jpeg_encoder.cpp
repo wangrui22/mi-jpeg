@@ -1,5 +1,5 @@
 #include "mi_gpu_jpeg_encoder.h"
-
+#include <chrono>
 extern "C" 
 cudaError_t rgb_2_yuv(const BlockUnit& rgb, const BlockUnit& yuv, const ImageInfo& img_info);
 
@@ -208,6 +208,8 @@ inline void write_bitstring(const BitString* bs, int counts, int& new_byte, int&
 
 }
 
+using namespace std::chrono;
+
 CudaTimeQuery::CudaTimeQuery() {
 }
 
@@ -245,8 +247,21 @@ GPUJpegEncoder::~GPUJpegEncoder() {
 
 }
 
-int GPUJpegEncoder::init(std::vector<int> qualitys) {
+int GPUJpegEncoder::init(std::vector<int> qualitys, std::shared_ptr<Image> rgb) {
+    _raw_image = rgb;
+
+    _img_info.width = rgb->width;
+    _img_info.height = rgb->height;
+    _img_info.width_ext = div_and_round_up(rgb->width, 8);
+    _img_info.height_ext = div_and_round_up(rgb->height, 8);
+    _img_info.mcu_w = _img_info.width_ext/8;
+    _img_info.mcu_h = _img_info.height_ext/8;
+    _img_info.segment_count = _img_info.mcu_w*_img_info.mcu_h;
+    _raw_rgb.length = _img_info.width*_img_info.height*3;
+
     cudaError_t err = cudaSuccess;
+
+    //init DCT table
     for (size_t i=0; i<qualitys.size(); ++i) {
         const int quality = qualitys[i];
         if (quality < 10 || quality>100) {
@@ -282,6 +297,7 @@ int GPUJpegEncoder::init(std::vector<int> qualitys) {
         _dct_table[quality] = dct_table;
     }
 
+    //init huffman table
     compute_huffman_table(BITS_DC_LUMINANCE, VAL_DC_LUMINANCE, _huffman_table_Y_DC);
     compute_huffman_table(BITS_AC_LUMINANCE, VAL_AC_LUMINANCE, _huffman_table_Y_AC);
     compute_huffman_table(BITS_DC_CHROMINANCE, VAL_DC_CHROMINANCE, _huffman_table_CbCr_DC);
@@ -307,20 +323,7 @@ int GPUJpegEncoder::init(std::vector<int> qualitys) {
     err = cudaMemcpy(_huffman_table.d_huffman_table_CbCr_AC, _huffman_table_CbCr_AC, sizeof(_huffman_table_CbCr_AC), cudaMemcpyDefault);
     CHECK_CUDA_ERROR(err)
 
-    return 0;
-}
-
-int GPUJpegEncoder::compress(std::shared_ptr<Image> rgb, int quality, unsigned char*& compress_buffer, unsigned int& buffer_len) {
-    _img_info.width = rgb->width;
-    _img_info.height = rgb->height;
-    _img_info.width_ext = div_and_round_up(rgb->width, 8);
-    _img_info.height_ext = div_and_round_up(rgb->height, 8);
-    _img_info.mcu_w = _img_info.width_ext/8;
-    _img_info.mcu_h = _img_info.height_ext/8;
-    _img_info.segment_count = _img_info.mcu_w*_img_info.mcu_h;
-
-    _raw_rgb.length = _img_info.width*_img_info.height*3;
-    cudaError_t err = cudaSuccess;
+    //init segment
     err = cudaMalloc(&_raw_rgb.d_buffer, _raw_rgb.length);
     CHECK_CUDA_ERROR(err)
     err = cudaMemcpy(_raw_rgb.d_buffer, rgb->buffer, _raw_rgb.length, cudaMemcpyDefault);
@@ -347,7 +350,14 @@ int GPUJpegEncoder::compress(std::shared_ptr<Image> rgb, int quality, unsigned c
 
     err = cudaMalloc(&_d_huffman_code_count, _img_info.mcu_w*_img_info.mcu_h*3*sizeof(int));
     CHECK_CUDA_ERROR(err)
-    
+
+    return 0;
+}
+
+int GPUJpegEncoder::compress(int quality, unsigned char*& compress_buffer, unsigned int& buffer_len) {
+    steady_clock::time_point _start = steady_clock::now();
+
+    cudaError_t err = cudaSuccess;
 
     // {
     //     CudaTimeQuery t0;
@@ -385,6 +395,8 @@ int GPUJpegEncoder::compress(std::shared_ptr<Image> rgb, int quality, unsigned c
     buffer_len = _compress_byte;
     compress_buffer = new unsigned char[buffer_len];
     memcpy(compress_buffer, _compress_buffer, _compress_byte);
+
+    std::cout << "gpu jpeg compress cost " << duration_cast<duration<double>>(steady_clock::now()-_start).count()*1000 << " ms\n";
 
     return 0;
 }
@@ -512,6 +524,8 @@ void GPUJpegEncoder::write_jpeg_header(int quality) {
 
 void GPUJpegEncoder::write_jpeg_segment() {
 
+    steady_clock::time_point _start = steady_clock::now();
+
     BitString* huffman_code = new BitString[_img_info.mcu_w*_img_info.mcu_h*MCU_HUFFMAN_CAPACITY*3];
     int* huffman_code_count = new int[_img_info.mcu_w*_img_info.mcu_h*3];
     cudaError_t err = cudaSuccess;
@@ -534,5 +548,5 @@ void GPUJpegEncoder::write_jpeg_segment() {
         write_bitstring(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos);
     }
 
-
+    std::cout << "gpu jpeg write seg cost " << duration_cast<duration<double>>(steady_clock::now()-_start).count()*1000 << " ms\n";
 }

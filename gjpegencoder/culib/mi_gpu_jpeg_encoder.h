@@ -34,8 +34,8 @@ class GPUJpegEncoder {
 public:
     GPUJpegEncoder();
     ~GPUJpegEncoder();
-    int init(std::vector<int> qualitys);
-    int compress(std::shared_ptr<Image> rgb, int quality, unsigned char*& compress_buffer, unsigned int& buffer_len);
+    int init(std::vector<int> qualitys, std::shared_ptr<Image> rgb);
+    int compress(int quality, unsigned char*& compress_buffer, unsigned int& buffer_len);
     
 public:
     void write_word(unsigned short val);
@@ -47,6 +47,8 @@ public:
     void write_jpeg_segment();
 
 private:
+    std::shared_ptr<Image> _raw_image;
+
     unsigned char* _compress_buffer;
     unsigned int _compress_capacity;
     unsigned int _compress_byte;

@@ -9,7 +9,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <exception>
-#include <chrono>
 #include <cuda_runtime.h>
 
 #define CHECK_CUDA_ERROR(err) \
@@ -26,7 +25,7 @@ struct Image {
     int height;
     unsigned char* buffer;
 
-    Image():width(0),height(0),buffer(nullptr) {}
+    Image():width(0),height(0),buffer(NULL) {}
 
     ~Image() {
         if (!buffer) {

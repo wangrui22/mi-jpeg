@@ -34,10 +34,10 @@ int main(int argc, char *argv[]) {
     qualitys.push_back(50);
     qualitys.push_back(100);
     GPUJpegEncoder encoder;
-    encoder.init(qualitys);
+    encoder.init(qualitys, rgb_image);
     unsigned char* compress_buffer = nullptr;
     unsigned int compress_buffer_len = 0;
-    encoder.compress(rgb_image, 100, compress_buffer, compress_buffer_len);
+    encoder.compress(100, compress_buffer, compress_buffer_len);
     std::ofstream out("/home/wangrui22/projects/mi-jpeg/gjpegencoder/bin/rgb-4000-512.2400-2.jpeg", std::ios::out|std::ios::binary);
     if (out.is_open()) {
         out.write((char*)compress_buffer, compress_buffer_len);

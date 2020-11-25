@@ -1,9 +1,12 @@
+# project(culib LANGUAGES CUDA CXX)
+# set (CMAKE_CXX_STANDARD 11)
+
 aux_source_directory(./ CULIB_SRC)
 
 #gdb支持
 SET(CMAKE_BUILD_TYPE "Debug")
-SET(CMAKE_CXX_FLAGS_DEBUG "$ENV{CXXFLAGS} -O0 -Wall -g2 -ggdb")
-SET(CMAKE_CXX_FLAGS_RELEASE "$ENV{CXXFLAGS} -O3 -Wall")
+SET(CMAKE_CXX_FLAGS_DEBUG "$ENV{CXXFLAGS} -std=c++11 -O0 -Wall -g2 -ggdb")
+SET(CMAKE_CXX_FLAGS_RELEASE "$ENV{CXXFLAGS} -std=c++11 -O3 -Wall")
 
 include_directories(/usr/local/cuda/include)
 
