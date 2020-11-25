@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <exception>
+#include <chrono>
 #include <cuda_runtime.h>
 
 #define CHECK_CUDA_ERROR(err) \

@@ -251,7 +251,7 @@ __global__ void kernel_huffman_encoding(const BlockUnit dct_result, const BlockU
     // BitString* HTACs[3] = {_S_huffman_table_Y_AC, _S_huffman_table_CbCr_AC, _S_huffman_table_CbCr_AC};
 
     short *quant_base = (short*)dct_result.d_buffer + mcu_id*64*3;
-    BitString* output_base = (BitString*)huffman_code.d_buffer + mcu_id*128*3;
+    BitString* output_base = (BitString*)huffman_code.d_buffer + mcu_id*256*3;
     int* output_count = d_huffman_code_count + mcu_id*3;
     short preDC[3] = {0,0,0};
     if (mcu_id != 0) {
@@ -262,7 +262,7 @@ __global__ void kernel_huffman_encoding(const BlockUnit dct_result, const BlockU
 
     for (int j=0; j<3; ++j) {
         short *quant = quant_base + 64*j;
-        BitString *output = output_base + 128*j;
+        BitString *output = output_base + 256*j;
         BitString *HTDC = HTDCs[j];
         BitString *HTAC = HTACs[j];
 
@@ -312,6 +312,10 @@ __global__ void kernel_huffman_encoding(const BlockUnit dct_result, const BlockU
         }
 
         output_count[j] = index;
+
+        if (index >= 256) {
+            printf("err\n");
+        }
     }
 
 }

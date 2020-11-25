@@ -153,8 +153,8 @@ inline void compute_huffman_table(const unsigned char* bit_val_count_array, cons
 	}
 }
 
-const static unsigned int BASIC_BYTE = 1024*1024*2;
-
+const unsigned int BASIC_BYTE = 1024*1024*2;
+const unsigned int MCU_HUFFMAN_CAPACITY = 256;
 inline void write_word(unsigned short val, unsigned char* buffer, unsigned int& byte) {
     unsigned short val0 = ((val>>8)&0xFF) | ((val&0xFF)<<8);
     *((unsigned short*)buffer) = val0;
@@ -271,7 +271,7 @@ int GPUJpegEncoder::init(std::vector<int> qualitys) {
         CHECK_CUDA_ERROR(err)
         err = cudaMalloc(&dct_table.d_quant_tbl_chrominance, 64*sizeof(float));
         CHECK_CUDA_ERROR(err)
-        err = cudaMemcpy(dct_table.d_quant_tbl_chrominance, tbl_luminance ,64*sizeof(float), cudaMemcpyDefault);
+        err = cudaMemcpy(dct_table.d_quant_tbl_chrominance, tbl_chrominance ,64*sizeof(float), cudaMemcpyDefault);
         CHECK_CUDA_ERROR(err)
 
         err = cudaMalloc(&dct_table.d_zig_zag, 64);
@@ -339,7 +339,7 @@ int GPUJpegEncoder::compress(std::shared_ptr<Image> rgb, int quality, unsigned c
     err = cudaMemset(_dct_result.d_buffer, 0, _dct_result.length);
     CHECK_CUDA_ERROR(err)
 
-    _huffman_result.length = _img_info.mcu_w*_img_info.mcu_h*128*sizeof(BitString)*3;
+    _huffman_result.length = _img_info.mcu_w*_img_info.mcu_h*MCU_HUFFMAN_CAPACITY*sizeof(BitString)*3;
     err = cudaMalloc(&_huffman_result.d_buffer, _huffman_result.length);
     CHECK_CUDA_ERROR(err)
     err = cudaMemset(_huffman_result.d_buffer, 0, _huffman_result.length);
@@ -511,33 +511,25 @@ void GPUJpegEncoder::write_jpeg_header(int quality) {
 }
 
 void GPUJpegEncoder::write_jpeg_segment() {
-    // _huffman_result.length = _img_info.mcu_w*_img_info.mcu_h*128*sizeof(BitString)*3;
-    // err = cudaMalloc(&_huffman_result.d_buffer, _huffman_result.length);
-    // CHECK_CUDA_ERROR(err)
-    // err = cudaMemset(_huffman_result.d_buffer, 0, _huffman_result.length);
-    // CHECK_CUDA_ERROR(err)
 
-    // err = cudaMalloc(&_d_huffman_code_count, _img_info.mcu_w*_img_info.mcu_h*sizeof(int));
-    // CHECK_CUDA_ERROR(err)
-
-    BitString* huffman_code = new BitString[_img_info.mcu_w*_img_info.mcu_h*128*3];
+    BitString* huffman_code = new BitString[_img_info.mcu_w*_img_info.mcu_h*MCU_HUFFMAN_CAPACITY*3];
     int* huffman_code_count = new int[_img_info.mcu_w*_img_info.mcu_h*3];
     cudaError_t err = cudaSuccess;
 
-    err = cudaMemcpy(huffman_code, _huffman_result.d_buffer, _img_info.mcu_w*_img_info.mcu_h*128*3*sizeof(BitString), cudaMemcpyDefault);
+    err = cudaMemcpy(huffman_code, _huffman_result.d_buffer, _img_info.mcu_w*_img_info.mcu_h*MCU_HUFFMAN_CAPACITY*3*sizeof(BitString), cudaMemcpyDefault);
     CHECK_CUDA_ERROR(err)
     err = cudaMemcpy(huffman_code_count, _d_huffman_code_count, _img_info.mcu_w*_img_info.mcu_h*3*sizeof(int), cudaMemcpyDefault);
     CHECK_CUDA_ERROR(err)
 
     int new_byte=0, new_byte_pos=7;
     for (int i=0; i<_img_info.segment_count; ++i) {
-        BitString* huffman_code_seg = huffman_code+128*3*i;
+        BitString* huffman_code_seg = huffman_code+MCU_HUFFMAN_CAPACITY*3*i;
         int* huffman_code_count_seg = huffman_code_count+3*i;
         write_bitstring(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos);
-        huffman_code_seg += 128;
+        huffman_code_seg += MCU_HUFFMAN_CAPACITY;
         huffman_code_count_seg += 1;
         write_bitstring(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos);
-        huffman_code_seg += 128;
+        huffman_code_seg += MCU_HUFFMAN_CAPACITY;
         huffman_code_count_seg += 1;
         write_bitstring(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos);
     }
