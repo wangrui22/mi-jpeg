@@ -388,7 +388,7 @@ int GPUJpegEncoder::compress(int quality, unsigned char*& compress_buffer, unsig
 
     write_jpeg_header(quality);
 
-    write_jpeg_segment();
+    write_jpeg_segment_gpu();
 
     write_word(0xFFD9); //Write End of Image Marker  
 
@@ -549,4 +549,82 @@ void GPUJpegEncoder::write_jpeg_segment() {
     }
 
     std::cout << "gpu jpeg write seg cost " << duration_cast<duration<double>>(steady_clock::now()-_start).count()*1000 << " ms\n";
+}
+
+void GPUJpegEncoder::write_jpeg_segment_gpu() {
+    
+
+    BitString* huffman_code = new BitString[_img_info.mcu_w*_img_info.mcu_h*MCU_HUFFMAN_CAPACITY*3];
+    int* huffman_code_count = new int[_img_info.mcu_w*_img_info.mcu_h*3];
+    cudaError_t err = cudaSuccess;
+
+
+    err = cudaMemcpy(huffman_code, _huffman_result.d_buffer, _img_info.mcu_w*_img_info.mcu_h*MCU_HUFFMAN_CAPACITY*3*sizeof(BitString), cudaMemcpyDefault);
+    CHECK_CUDA_ERROR(err)
+    err = cudaMemcpy(huffman_code_count, _d_huffman_code_count, _img_info.mcu_w*_img_info.mcu_h*3*sizeof(int), cudaMemcpyDefault);
+    CHECK_CUDA_ERROR(err)
+
+    steady_clock::time_point _start = steady_clock::now();
+    
+    // std::vector<int> vec;
+    // vec.resize(4096);
+    // int idx = 0;
+    // unsigned int len=0;
+    // for (int i=0; i<_img_info.segment_count; ++i) {
+    //     BitString* huffman_code_seg = huffman_code+MCU_HUFFMAN_CAPACITY*3*i;
+    //     int* huffman_code_count_seg = huffman_code_count+3*i;
+    //     for (int j=0; j<*huffman_code_count_seg; ++j) {
+    //         len += huffman_code_seg[j].length;
+    //         if (len % 32 == 0) {
+    //             vec[idx++] = i;
+    //         }
+    //     }
+        
+        
+    // }
+    // std::cout << vec.size() << "\n";
+
+    //std::cout << "gpu jpeg write seg(2) cost " << duration_cast<duration<double>>(steady_clock::now()-_start).count()*1000 << " ms\n";
+
+    //test
+    unsigned int len=0;
+    for (int i=0; i<_img_info.segment_count; ++i) {
+        BitString* huffman_code_seg = huffman_code+MCU_HUFFMAN_CAPACITY*3*i;
+        int* huffman_code_count_seg = huffman_code_count+3*i;
+        for (int j=0; j<*huffman_code_count_seg; ++j) {
+            len += huffman_code_seg[j].length;
+        }
+        huffman_code_seg += MCU_HUFFMAN_CAPACITY;
+        huffman_code_count_seg += 1;
+        for (int j=0; j<*huffman_code_count_seg; ++j) {
+            len += huffman_code_seg[j].length;
+        }
+        huffman_code_seg += MCU_HUFFMAN_CAPACITY;
+        huffman_code_count_seg += 1;
+        for (int j=0; j<*huffman_code_count_seg; ++j) {
+            len += huffman_code_seg[j].length;
+        }
+    }
+    //会比实际小，因为huffman后面全
+    std::cout << "huffman code len: " << len/8 + _img_info.segment_count<< "\n";
+
+    unsigned int b0 = _compress_byte;
+
+    int new_byte=0, new_byte_pos=7;
+    for (int i=0; i<_img_info.segment_count; ++i) {
+        BitString* huffman_code_seg = huffman_code+MCU_HUFFMAN_CAPACITY*3*i;
+        int* huffman_code_count_seg = huffman_code_count+3*i;
+        write_bitstring(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos);
+        huffman_code_seg += MCU_HUFFMAN_CAPACITY;
+        huffman_code_count_seg += 1;
+        write_bitstring(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos);
+        huffman_code_seg += MCU_HUFFMAN_CAPACITY;
+        huffman_code_count_seg += 1;
+        write_bitstring(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos);
+    }
+
+    unsigned int b1 = _compress_byte;
+    std::cout << "segment len: " << b1-b0 << "\n";
+
+    std::cout << "gpu jpeg write seg(2) cost " << duration_cast<duration<double>>(steady_clock::now()-_start).count()*1000 << " ms\n";
 }
