@@ -282,12 +282,22 @@ void JpegEncoder::init(int quality) {
 }
 
 int JpegEncoder::compress(std::shared_ptr<Image> rgb, int quality, unsigned char*& compress_buffer, unsigned int& buffer_len) {  
+    _img_info.width = rgb->width;
+    _img_info.height = rgb->height;
+    _img_info.width_ext = div_and_round_up(rgb->width, 8);
+    _img_info.height_ext = div_and_round_up(rgb->height, 8);
+    _img_info.mcu_w = _img_info.width_ext/8;
+    _img_info.mcu_h = _img_info.height_ext/8;
+    _img_info.mcu_count = _img_info.mcu_w*_img_info.mcu_h;
+    _img_info.segment_mcu_count = 8;
+    _img_info.segment_count = div_and_round_up(_img_info.mcu_count,_img_info.segment_mcu_count);
+
 	init(quality);
 
     write_jpeg_header(rgb);
 
     std::vector<MCU> mcus;
-    rgb_2_yuv_segment(rgb, mcus);
+    rgb_2_yuv(rgb, mcus);
 
     const int mcu_count = (int)mcus.size();
     for (int i=0; i<mcu_count; ++i) {
@@ -298,24 +308,73 @@ int JpegEncoder::compress(std::shared_ptr<Image> rgb, int quality, unsigned char
         dct_8x8(mcu.v, mcu.quat_v, _quantization_table_chrominance);
     }
     
-    for (int i=0; i<mcu_count; ++i) {
-        MCU& mcu = mcus[i];
-        short y_preDC = i == 0 ? 0 : mcus[i-1].quat_y[0];
-        short u_preDC = i == 0 ? 0 : mcus[i-1].quat_u[0];
-        short v_preDC = i == 0 ? 0 : mcus[i-1].quat_v[0];
+    for (int i=0; i<_img_info.segment_count; ++i) {
+        const int mcu0 = i*_img_info.segment_mcu_count;
+        int mcu1 = mcu0 + _img_info.segment_mcu_count;
+        if (mcu1 > _img_info.mcu_count-1) {
+            mcu1 = _img_info.mcu_count-1;
+        }
+        for (int m=mcu0; m<mcu1; ++m) {
+            MCU& mcu = mcus[m];
+            short y_preDC = m == mcu0 ? 0 : mcus[m-1].quat_y[0];
+            short u_preDC = m == mcu0 ? 0 : mcus[m-1].quat_u[0];
+            short v_preDC = m == mcu0 ? 0 : mcus[m-1].quat_v[0];
 
-        huffman_encode_8x8(mcu.quat_y, y_preDC, _huffman_table_Y_DC, _huffman_table_Y_AC, mcu.huffman_code_y, mcu.huffman_code_y_count);
-        huffman_encode_8x8(mcu.quat_u, u_preDC, _huffman_table_CbCr_DC, _huffman_table_CbCr_AC, mcu.huffman_code_u, mcu.huffman_code_u_count);
-        huffman_encode_8x8(mcu.quat_v, v_preDC, _huffman_table_CbCr_DC, _huffman_table_CbCr_AC, mcu.huffman_code_v, mcu.huffman_code_v_count);
+            huffman_encode_8x8(mcu.quat_y, y_preDC, _huffman_table_Y_DC, _huffman_table_Y_AC, mcu.huffman_code_y, mcu.huffman_code_y_count);
+            huffman_encode_8x8(mcu.quat_u, u_preDC, _huffman_table_CbCr_DC, _huffman_table_CbCr_AC, mcu.huffman_code_u, mcu.huffman_code_u_count);
+            huffman_encode_8x8(mcu.quat_v, v_preDC, _huffman_table_CbCr_DC, _huffman_table_CbCr_AC, mcu.huffman_code_v, mcu.huffman_code_v_count);
+        }
     }
 
-    int new_byte=0, new_byte_pos=7;
-    for (int i=0; i<mcu_count; ++i) {
-        MCU& mcu = mcus[i];
-        write_bitstring(mcu.huffman_code_y, mcu.huffman_code_y_count, new_byte, new_byte_pos);
-        write_bitstring(mcu.huffman_code_u, mcu.huffman_code_u_count, new_byte, new_byte_pos);
-        write_bitstring(mcu.huffman_code_v, mcu.huffman_code_v_count, new_byte, new_byte_pos);
+    for (int i=0; i<_img_info.segment_count; ++i) {
+        const int mcu0 = i*_img_info.segment_mcu_count;
+        int mcu1 = mcu0 + _img_info.segment_mcu_count;
+        if (mcu1 > _img_info.mcu_count-1) {
+            mcu1 = _img_info.mcu_count-1;
+        }
+        int new_byte=0, new_byte_pos=7;
+        for (int m=mcu0; m<mcu1; ++m) {
+            MCU& mcu = mcus[m];
+            write_bitstring(mcu.huffman_code_y, mcu.huffman_code_y_count, new_byte, new_byte_pos);
+            write_bitstring(mcu.huffman_code_u, mcu.huffman_code_u_count, new_byte, new_byte_pos);
+            write_bitstring(mcu.huffman_code_v, mcu.huffman_code_v_count, new_byte, new_byte_pos);
+        }
+
+        if (new_byte_pos != 7) {
+            int bp = new_byte_pos;
+            int b = new_byte; 
+            int mask[8] = {1,2,4,8,16,32,64,128};
+            while (bp>=0) {
+                b = b | mask[bp];                
+                --bp;
+            }
+            write_byte((unsigned char)b);
+            new_byte_pos = 7;
+            new_byte = 0;
+        }
+
+        write_word(0xFFD0+i%8);
     }
+
+
+    // for (int i=0; i<mcu_count; ++i) {
+    //     MCU& mcu = mcus[i];
+    //     short y_preDC = i == 0 ? 0 : mcus[i-1].quat_y[0];
+    //     short u_preDC = i == 0 ? 0 : mcus[i-1].quat_u[0];
+    //     short v_preDC = i == 0 ? 0 : mcus[i-1].quat_v[0];
+
+    //     huffman_encode_8x8(mcu.quat_y, y_preDC, _huffman_table_Y_DC, _huffman_table_Y_AC, mcu.huffman_code_y, mcu.huffman_code_y_count);
+    //     huffman_encode_8x8(mcu.quat_u, u_preDC, _huffman_table_CbCr_DC, _huffman_table_CbCr_AC, mcu.huffman_code_u, mcu.huffman_code_u_count);
+    //     huffman_encode_8x8(mcu.quat_v, v_preDC, _huffman_table_CbCr_DC, _huffman_table_CbCr_AC, mcu.huffman_code_v, mcu.huffman_code_v_count);
+    // }
+
+    // int new_byte=0, new_byte_pos=7;
+    // for (int i=0; i<mcu_count; ++i) {
+    //     MCU& mcu = mcus[i];
+    //     write_bitstring(mcu.huffman_code_y, mcu.huffman_code_y_count, new_byte, new_byte_pos);
+    //     write_bitstring(mcu.huffman_code_u, mcu.huffman_code_u_count, new_byte, new_byte_pos);
+    //     write_bitstring(mcu.huffman_code_v, mcu.huffman_code_v_count, new_byte, new_byte_pos);
+    // }
 
     write_word(0xFFD9); //Write End of Image Marker  
 
@@ -326,14 +385,14 @@ int JpegEncoder::compress(std::shared_ptr<Image> rgb, int quality, unsigned char
     return 0;
 }
 
-void JpegEncoder::rgb_2_yuv_segment(std::shared_ptr<Image> rgb, std::vector<MCU>& mcus) {
-    const int width = rgb->width;
-    const int height = rgb->height;
-    const int width_ext = div_and_round_up(width, 8);
-    const int height_ext = div_and_round_up(height, 8);
-    const int mcu_w = width_ext/8;
-    const int mcu_h = height_ext/8;
-    const int mcu_count = mcu_w*mcu_h;
+void JpegEncoder::rgb_2_yuv(std::shared_ptr<Image> rgb, std::vector<MCU>& mcus) {
+    const int width = _img_info.width;
+    const int height = _img_info.height;
+    const int width_ext = _img_info.width_ext;
+    const int height_ext = _img_info.height_ext;
+    const int mcu_w = _img_info.mcu_w;
+    const int mcu_h = _img_info.mcu_h;
+    const int mcu_count = _img_info.mcu_count;
 
     mcus.resize(mcu_count);
     for (int i=0; i<mcu_count; ++i) {
@@ -592,6 +651,11 @@ void JpegEncoder::write_jpeg_header(std::shared_ptr<Image> rgb) {
 	write_byte(0x11);			//HTCbACinfo
 	write_byte_array(bits_ac_chrominance, sizeof(bits_ac_chrominance));
 	write_byte_array(val_ac_chrominance, sizeof(val_ac_chrominance));
+
+    //DRI
+    write_word(0xFFDD);
+    write_word(4);
+    write_word(8);
 
 	//SOS
 	write_word(0xFFDA);		//marker = 0xFFC4

@@ -73,6 +73,18 @@ struct MCU {
     }
 };
 
+struct ImageInfo {
+    int width;
+    int height;
+    int width_ext;
+    int height_ext;
+    int mcu_w;
+    int mcu_h;
+    int mcu_count;
+    int segment_mcu_count;
+    int segment_count;
+};
+
 class JpegEncoder {
 public:
     JpegEncoder();
@@ -82,7 +94,7 @@ public:
 public:
     void init(int quality);
 
-    void rgb_2_yuv_segment(std::shared_ptr<Image> rgb, std::vector<MCU>& mcus);
+    void rgb_2_yuv(std::shared_ptr<Image> rgb, std::vector<MCU>& mcus);
     
     void dct_8x8(unsigned char* val, short* output, float* quant_table);
     void huffman_encode_8x8(short* quant, short preDC, const BitString* HTDC, const BitString* HTAC, BitString* output, int& output_count);
@@ -109,6 +121,9 @@ private:
 	BitString _huffman_table_Y_AC[256];
 	BitString _huffman_table_CbCr_DC[12];
 	BitString _huffman_table_CbCr_AC[256];
+
+    ImageInfo _img_info;
+    
 };
 
 #endif
