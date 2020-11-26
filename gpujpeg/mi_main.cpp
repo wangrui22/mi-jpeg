@@ -75,7 +75,7 @@ int main(int argc, char* argv[]) {
 
     std::cout << "gpucompress cost " << duration_cast<duration<double>>(steady_clock::now()-_start).count()*1000 << " ms\n";
 
-    std::ofstream out("/home/wangrui22/projects/mi-jpeg/bin/rgb-gpujpeg.jpeg", std::ios::out|std::ios::binary);
+    std::ofstream out("/home/wangrui22/projects/mi-jpeg/bin/gpujpeg.jpeg", std::ios::out|std::ios::binary);
     if (out.is_open()) {
         out.write((char*)image_compressed, compress_size);
         out.close();
