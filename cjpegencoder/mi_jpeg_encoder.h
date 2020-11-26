@@ -28,7 +28,7 @@ struct BitString {
 	int value;
 };
 
-struct Segment {
+struct MCU {
     unsigned char rgb[64*3];
     unsigned char y[64];
     unsigned char u[64];
@@ -43,7 +43,7 @@ struct Segment {
     int huffman_code_u_count;
     int huffman_code_v_count;
 
-    Segment():huffman_code_y(nullptr), huffman_code_u(nullptr), huffman_code_v(nullptr),
+    MCU():huffman_code_y(nullptr), huffman_code_u(nullptr), huffman_code_v(nullptr),
     huffman_code_y_count(0),huffman_code_u_count(0),huffman_code_v_count(0) {
         memset(rgb, 0, 64*3);
         for (int i=0; i<64*3; ++i) {
@@ -57,7 +57,7 @@ struct Segment {
         memset(quat_v, 0, 64*2);
     }
 
-    ~Segment() {
+    ~MCU() {
         if (!huffman_code_y) {
             delete [] huffman_code_y;
             huffman_code_y = nullptr;
@@ -82,7 +82,7 @@ public:
 public:
     void init(int quality);
 
-    void rgb_2_yuv_segment(std::shared_ptr<Image> rgb, std::vector<Segment>& segments);
+    void rgb_2_yuv_segment(std::shared_ptr<Image> rgb, std::vector<MCU>& mcus);
     
     void dct_8x8(unsigned char* val, short* output, float* quant_table);
     void huffman_encode_8x8(short* quant, short preDC, const BitString* HTDC, const BitString* HTAC, BitString* output, int& output_count);

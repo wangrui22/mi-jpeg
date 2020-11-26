@@ -286,35 +286,35 @@ int JpegEncoder::compress(std::shared_ptr<Image> rgb, int quality, unsigned char
 
     write_jpeg_header(rgb);
 
-    std::vector<Segment> segments;
-    rgb_2_yuv_segment(rgb, segments);
+    std::vector<MCU> mcus;
+    rgb_2_yuv_segment(rgb, mcus);
 
-    const int seg_count = (int)segments.size();
-    for (int i=0; i<seg_count; ++i) {
-        Segment& segment = segments[i];
+    const int mcu_count = (int)mcus.size();
+    for (int i=0; i<mcu_count; ++i) {
+        MCU& mcu = mcus[i];
 
-        dct_8x8(segment.y, segment.quat_y, _quantization_table_luminance);
-        dct_8x8(segment.u, segment.quat_u, _quantization_table_chrominance);
-        dct_8x8(segment.v, segment.quat_v, _quantization_table_chrominance);
+        dct_8x8(mcu.y, mcu.quat_y, _quantization_table_luminance);
+        dct_8x8(mcu.u, mcu.quat_u, _quantization_table_chrominance);
+        dct_8x8(mcu.v, mcu.quat_v, _quantization_table_chrominance);
     }
+    
+    for (int i=0; i<mcu_count; ++i) {
+        MCU& mcu = mcus[i];
+        short y_preDC = i == 0 ? 0 : mcus[i-1].quat_y[0];
+        short u_preDC = i == 0 ? 0 : mcus[i-1].quat_u[0];
+        short v_preDC = i == 0 ? 0 : mcus[i-1].quat_v[0];
 
-    for (int i=0; i<seg_count; ++i) {
-        Segment& segment = segments[i];
-        short y_preDC = i == 0 ? 0 : segments[i-1].quat_y[0];
-        short u_preDC = i == 0 ? 0 : segments[i-1].quat_u[0];
-        short v_preDC = i == 0 ? 0 : segments[i-1].quat_v[0];
-
-        huffman_encode_8x8(segment.quat_y, y_preDC, _huffman_table_Y_DC, _huffman_table_Y_AC, segment.huffman_code_y, segment.huffman_code_y_count);
-        huffman_encode_8x8(segment.quat_u, u_preDC, _huffman_table_CbCr_DC, _huffman_table_CbCr_AC, segment.huffman_code_u, segment.huffman_code_u_count);
-        huffman_encode_8x8(segment.quat_v, v_preDC, _huffman_table_CbCr_DC, _huffman_table_CbCr_AC, segment.huffman_code_v, segment.huffman_code_v_count);
+        huffman_encode_8x8(mcu.quat_y, y_preDC, _huffman_table_Y_DC, _huffman_table_Y_AC, mcu.huffman_code_y, mcu.huffman_code_y_count);
+        huffman_encode_8x8(mcu.quat_u, u_preDC, _huffman_table_CbCr_DC, _huffman_table_CbCr_AC, mcu.huffman_code_u, mcu.huffman_code_u_count);
+        huffman_encode_8x8(mcu.quat_v, v_preDC, _huffman_table_CbCr_DC, _huffman_table_CbCr_AC, mcu.huffman_code_v, mcu.huffman_code_v_count);
     }
 
     int new_byte=0, new_byte_pos=7;
-    for (int i=0; i<seg_count; ++i) {
-        Segment& segment = segments[i];
-        write_bitstring(segment.huffman_code_y, segment.huffman_code_y_count, new_byte, new_byte_pos);
-        write_bitstring(segment.huffman_code_u, segment.huffman_code_u_count, new_byte, new_byte_pos);
-        write_bitstring(segment.huffman_code_v, segment.huffman_code_v_count, new_byte, new_byte_pos);
+    for (int i=0; i<mcu_count; ++i) {
+        MCU& mcu = mcus[i];
+        write_bitstring(mcu.huffman_code_y, mcu.huffman_code_y_count, new_byte, new_byte_pos);
+        write_bitstring(mcu.huffman_code_u, mcu.huffman_code_u_count, new_byte, new_byte_pos);
+        write_bitstring(mcu.huffman_code_v, mcu.huffman_code_v_count, new_byte, new_byte_pos);
     }
 
     write_word(0xFFD9); //Write End of Image Marker  
@@ -326,26 +326,26 @@ int JpegEncoder::compress(std::shared_ptr<Image> rgb, int quality, unsigned char
     return 0;
 }
 
-void JpegEncoder::rgb_2_yuv_segment(std::shared_ptr<Image> rgb, std::vector<Segment>& segments) {
+void JpegEncoder::rgb_2_yuv_segment(std::shared_ptr<Image> rgb, std::vector<MCU>& mcus) {
     const int width = rgb->width;
     const int height = rgb->height;
     const int width_ext = div_and_round_up(width, 8);
     const int height_ext = div_and_round_up(height, 8);
     const int mcu_w = width_ext/8;
     const int mcu_h = height_ext/8;
-    const int seg_count = mcu_w*mcu_h;
+    const int mcu_count = mcu_w*mcu_h;
 
-    segments.resize(seg_count);
-    for (int i=0; i<seg_count; ++i) {
-        segments[i].huffman_code_y = new BitString[256];
-        segments[i].huffman_code_u = new BitString[256];
-        segments[i].huffman_code_v = new BitString[256];
-        memset(segments[i].huffman_code_y, 0, sizeof(BitString)*256);
-        memset(segments[i].huffman_code_u, 0, sizeof(BitString)*256);
-        memset(segments[i].huffman_code_v, 0, sizeof(BitString)*256);
+    mcus.resize(mcu_count);
+    for (int i=0; i<mcu_count; ++i) {
+        mcus[i].huffman_code_y = new BitString[256];
+        mcus[i].huffman_code_u = new BitString[256];
+        mcus[i].huffman_code_v = new BitString[256];
+        memset(mcus[i].huffman_code_y, 0, sizeof(BitString)*256);
+        memset(mcus[i].huffman_code_u, 0, sizeof(BitString)*256);
+        memset(mcus[i].huffman_code_v, 0, sizeof(BitString)*256);
     }
 
-    for (int i=0; i<seg_count; ++i) {
+    for (int i=0; i<mcu_count; ++i) {
         int y0 = i/mcu_w;
         int x0 = i-y0*mcu_w;
         y0*=8;
@@ -374,12 +374,12 @@ void JpegEncoder::rgb_2_yuv_segment(std::shared_ptr<Image> rgb, std::vector<Segm
                 v = v < 0.0f ? 0.0f : v;
                 v = v > 255.0f ? 255.0f : v;
 
-                segments[i].rgb[sidx*3]   = rgb->buffer[idx*3];
-                segments[i].rgb[sidx*3+1] = rgb->buffer[idx*3+1];
-                segments[i].rgb[sidx*3+2] = rgb->buffer[idx*3+2];
-                segments[i].y[sidx] = (unsigned char)y;
-                segments[i].u[sidx] = (unsigned char)u;
-                segments[i].v[sidx] = (unsigned char)v;
+                mcus[i].rgb[sidx*3]   = rgb->buffer[idx*3];
+                mcus[i].rgb[sidx*3+1] = rgb->buffer[idx*3+1];
+                mcus[i].rgb[sidx*3+2] = rgb->buffer[idx*3+2];
+                mcus[i].y[sidx] = (unsigned char)y;
+                mcus[i].u[sidx] = (unsigned char)u;
+                mcus[i].v[sidx] = (unsigned char)v;
                 ++sidx;
 
             } 
