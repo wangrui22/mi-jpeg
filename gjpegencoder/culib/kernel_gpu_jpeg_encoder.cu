@@ -113,8 +113,8 @@ __global__ void kernel_rgb_2_yuv_2_dct(const BlockUnit rgb, const BlockUnit dct_
 
     int width = img_info.width;
     int height = img_info.height;
-    int width_ext = img_info.width_ext;
-    int height_ext = img_info.height_ext;
+    //int width_ext = img_info.width_ext;
+    //int height_ext = img_info.height_ext;
 
     int x0 = mcu_x * 8;
     int y0 = mcu_y * 8;
@@ -234,7 +234,7 @@ __global__ void kernel_huffman_encoding(const BlockUnit dct_result, const BlockU
 
     int width = img_info.width;
     int height = img_info.height;
-    int width_ext = img_info.width_ext;
+    //int width_ext = img_info.width_ext;
     //int height_ext = img_info.height_ext;
 
     int x0 = mcu_x * 8;
@@ -253,8 +253,11 @@ __global__ void kernel_huffman_encoding(const BlockUnit dct_result, const BlockU
     short *quant_base = (short*)dct_result.d_buffer + mcu_id*64*3;
     BitString* output_base = (BitString*)huffman_code.d_buffer + mcu_id*256*3;
     int* output_count = d_huffman_code_count + mcu_id*3;
+    
+    int segment_id = mcu_id/img_info.segment_mcu_count;
+    int mcu_id_in_seg = mcu_id - segment_id*img_info.segment_mcu_count;
     short preDC[3] = {0,0,0};
-    if (mcu_id != 0) {
+    if (mcu_id_in_seg != 0) {
         preDC[0] = *(quant_base-64*3);
         preDC[1] = *(quant_base-64*2);
         preDC[2] = *(quant_base-64);
@@ -320,6 +323,130 @@ __global__ void kernel_huffman_encoding(const BlockUnit dct_result, const BlockU
 
 }
 
+__device__ void write_byte(unsigned char val, unsigned char* buffer, int& byte) {
+    *buffer = val;
+    byte += 1;
+}
+
+__device__ void write_bitstring(const BitString* bs, int counts, int& new_byte, int& new_byte_pos, unsigned char* buffer, int& byte) {
+    const unsigned short mask[] = {1,2,4,8,16,32,64,128,256,512,1024,2048,4096,8192,16384,32768};
+	for(int i=0; i<counts; ++i)
+	{
+		int value = bs[i].value;
+		int posval = bs[i].length - 1;
+
+		while (posval >= 0)
+		{
+			if ((value & mask[posval]) != 0)
+			{
+				new_byte = new_byte  | mask[new_byte_pos];
+			}
+			posval--;
+			new_byte_pos--;
+			if (new_byte_pos < 0)
+			{
+				// Write to stream
+				write_byte((unsigned char)(new_byte), buffer++, byte);
+				if (new_byte == 0xFF)
+				{
+					// Handle special case
+					write_byte((unsigned char)(0x00), buffer++, byte);
+				}
+
+				// Reinitialize
+				new_byte_pos = 7;
+				new_byte = 0;
+			}
+		}
+	}
+}
+
+__global__ void kernel_huffman_writebits(const BlockUnit huffman_code, int *d_huffman_code_count, const ImageInfo img_info, BlockUnit segment_compressed, int *d_segment_compressed_byte) {
+    unsigned int segid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (segid > img_info.segment_count-1) {
+        return;
+    }
+
+    const unsigned int MCU_HUFFMAN_CAPACITY = 256;
+    const int MAX_SEGMENT_BYTE = 4096;
+
+    const int mcu0 = segid*img_info.segment_mcu_count;
+    int mcu1 = mcu0 + img_info.segment_mcu_count;
+    if (mcu1 > img_info.mcu_count-1) {
+        mcu1 = img_info.mcu_count-1;
+    }
+
+    unsigned char* buffer = segment_compressed.d_buffer + segid*MAX_SEGMENT_BYTE;
+    int segment_compressed_byte = 0;
+    int new_byte=0, new_byte_pos=7;
+    for (int m=mcu0; m<mcu1; ++m) {
+        BitString* huffman_code_seg = (BitString*)huffman_code.d_buffer+MCU_HUFFMAN_CAPACITY*3*m;
+        int* huffman_code_count_seg = d_huffman_code_count+3*m;
+        write_bitstring(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos, buffer+segment_compressed_byte, segment_compressed_byte);
+        huffman_code_seg += MCU_HUFFMAN_CAPACITY;
+        huffman_code_count_seg += 1;
+        write_bitstring(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos, buffer+segment_compressed_byte, segment_compressed_byte);
+        huffman_code_seg += MCU_HUFFMAN_CAPACITY;
+        huffman_code_count_seg += 1;
+        write_bitstring(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos, buffer+segment_compressed_byte, segment_compressed_byte);
+    }
+
+    if (new_byte_pos != 7) {
+        int bp = new_byte_pos;
+        int b = new_byte; 
+        int mask[8] = {1,2,4,8,16,32,64,128};
+        while (bp>=0) {
+            b = b | mask[bp];                
+            --bp;
+        }
+        write_byte((unsigned char)b, buffer+segment_compressed_byte, segment_compressed_byte);
+        new_byte_pos = 7;
+        new_byte = 0;
+    }
+
+    write_byte(0xFF, buffer+segment_compressed_byte, segment_compressed_byte);
+    write_byte(0xD0+segid%8, buffer+segment_compressed_byte, segment_compressed_byte);
+
+    if (segment_compressed_byte > 4095) {
+        printf("segment byte error: %d\n", segment_compressed_byte);   
+    }
+    d_segment_compressed_byte[segid] = segment_compressed_byte;
+}
+
+__global__ void kernel_segment_offset(const ImageInfo img_info, int *d_segment_compressed_byte, int *d_segment_compressed_offset)  {
+    unsigned int segid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (segid > img_info.segment_count-1) {
+        return;
+    }
+    int val = 0;
+    for (int i=0; i<segid; ++i) {
+        if (d_segment_compressed_byte[i] < 0) {
+            //printf("segment byte error: %d\n", d_segment_compressed_byte[i]);    
+        }
+        val += d_segment_compressed_byte[i];
+    }
+    d_segment_compressed_offset[segid] = val;
+    if (segid == img_info.segment_count-1) {
+        printf("last segment offset: %d\n", val);
+    }
+}
+
+__global__ void kernel_segment_compact(const BlockUnit segment_compressed, const ImageInfo img_info, int *d_segment_compressed_byte, int *d_segment_compressed_offset, const BlockUnit segment_compressed_compact) {
+    unsigned int segid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (segid > img_info.segment_count-1) {
+        return;
+    }  
+    const int MAX_SEGMENT_BYTE = 4096;
+    const int src_offset = segid*MAX_SEGMENT_BYTE;
+    const int dst_offset = d_segment_compressed_offset[segid];
+    const int len = d_segment_compressed_byte[segid];
+    unsigned char* src = segment_compressed.d_buffer + src_offset;
+    unsigned char* dst = segment_compressed_compact.d_buffer + dst_offset;
+    for (int i=0; i<len; ++i) {
+        dst[i] = src[i];
+    }
+}
+
 extern "C"
 cudaError_t rgb_2_yuv(const BlockUnit& rgb, const BlockUnit& yuv, const ImageInfo& img_info) {
     const int BLOCK_SIZEX = 4;
@@ -374,3 +501,44 @@ cudaError_t huffman_encoding(const BlockUnit& dct_result, const BlockUnit& huffm
     return cudaDeviceSynchronize();
 }
 
+extern "C"
+cudaError_t huffman_writebits(const BlockUnit& huffman_code, int *d_huffman_code_count, const ImageInfo& img_info, const BlockUnit& segment_compressed, int *d_segment_compressed_byte) {
+    const int BLOCK_SIZE = 8;
+    dim3 block(BLOCK_SIZE, 1, 1);
+    dim3 grid(img_info.segment_count / BLOCK_SIZE, 1, 1);
+    if (grid.x * BLOCK_SIZE != img_info.segment_count) {
+        grid.x += 1;
+    }
+
+    kernel_huffman_writebits << <grid, block >> >(huffman_code, d_huffman_code_count, img_info, segment_compressed, d_segment_compressed_byte);
+    
+    return cudaDeviceSynchronize();
+}
+
+extern "C"
+cudaError_t segment_offset(const ImageInfo& img_info, int *d_segment_compressed_byte, int *d_segment_compressed_offset) {
+    const int BLOCK_SIZE = 8;
+    dim3 block(BLOCK_SIZE, 1, 1);
+    dim3 grid(img_info.segment_count / BLOCK_SIZE, 1, 1);
+    if (grid.x * BLOCK_SIZE != img_info.segment_count) {
+        grid.x += 1;
+    }
+
+    kernel_segment_offset << <grid, block >> >(img_info, d_segment_compressed_byte, d_segment_compressed_offset);
+    
+    return cudaDeviceSynchronize();
+}
+
+extern "C"
+cudaError_t segment_compact(const BlockUnit& segment_compressed, const ImageInfo& img_info, int *d_segment_compressed_byte, int *d_segment_compressed_offset, const BlockUnit& segment_compressed_compact) {
+    const int BLOCK_SIZE = 8;
+    dim3 block(BLOCK_SIZE, 1, 1);
+    dim3 grid(img_info.segment_count / BLOCK_SIZE, 1, 1);
+    if (grid.x * BLOCK_SIZE != img_info.segment_count) {
+        grid.x += 1;
+    }
+
+    kernel_segment_compact << <grid, block >> >(segment_compressed, img_info, d_segment_compressed_byte, d_segment_compressed_offset, segment_compressed_compact);
+    
+    return cudaDeviceSynchronize();
+}

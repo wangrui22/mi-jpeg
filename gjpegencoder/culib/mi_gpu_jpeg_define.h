@@ -35,8 +35,8 @@ struct Image {
 };
 
 struct BitString {
-	int length;	
-	int value;
+	short length;	
+	short value;
 };
 
 // struct Segment {
@@ -109,6 +109,8 @@ struct ImageInfo {
     int height_ext;
     int mcu_w;
     int mcu_h;
+    int mcu_count;
+    int segment_mcu_count;
     int segment_count;
 };
 

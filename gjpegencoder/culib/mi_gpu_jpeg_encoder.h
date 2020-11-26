@@ -45,12 +45,10 @@ public:
 
     void write_jpeg_header(int quality);
     void write_jpeg_segment();
-    void write_jpeg_segment_gpu();
+    void write_jpeg_segment_gpu(int segment_compressed_byte);
 
 private:
     std::shared_ptr<Image> _raw_image;
-
-
 
     unsigned char* _compress_buffer;
     unsigned int _compress_capacity;
@@ -75,6 +73,14 @@ private:
     int *_d_huffman_code_count;
 
     BlockUnit _huffman_code;
+
+    BlockUnit _segment_compressed;
+    int *_d_segment_compressed_byte;
+    int *_d_segment_compressed_offset;
+
+    BlockUnit _segment_compressed_compact;
+    
+    
 };
 
 #endif
