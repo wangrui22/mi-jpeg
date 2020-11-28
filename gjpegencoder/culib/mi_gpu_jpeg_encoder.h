@@ -34,7 +34,7 @@ class GPUJpegEncoder {
 public:
     GPUJpegEncoder();
     ~GPUJpegEncoder();
-    int init(std::vector<int> qualitys, std::shared_ptr<Image> rgb);
+    int init(std::vector<int> qualitys, int restart_interval, std::shared_ptr<Image> rgb);
     int compress(int quality, unsigned char*& compress_buffer, unsigned int& buffer_len);
     
 public:
@@ -42,9 +42,6 @@ public:
     void write_byte(unsigned char val);
     void write_byte_array(const unsigned char* buf, unsigned int buf_len);
     void write_bitstring(const BitString* bs, int counts, int& new_byte, int& new_byte_pos);
-
-    void write_32bit(int val);
-    void write_bitstring_ext(const BitString* bs, int counts, int& new_byte, int& new_byte_pos, int& new_32bit, int& new_32bit_byte_idx);
 
     void write_jpeg_header(int quality);
     void write_jpeg_segment();

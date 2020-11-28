@@ -55,16 +55,17 @@ int main(int argc, char *argv[]) {
 
     std::vector<int> qualitys;
     qualitys.push_back(50);
+    qualitys.push_back(80);
     qualitys.push_back(100);
     GPUJpegEncoder encoder;
-    encoder.init(qualitys, rgb_image);
+    encoder.init(qualitys, 8, rgb_image);
 
     steady_clock::time_point _start = steady_clock::now();    
     unsigned char* compress_buffer = nullptr;
     unsigned int compress_buffer_len = 0;
     const int loop = 100;
     for (int i=0; i<loop; ++i) {
-        encoder.compress(50, compress_buffer, compress_buffer_len);
+        encoder.compress(80, compress_buffer, compress_buffer_len);
     }
     std::cout << "gpucompress cost " << duration_cast<duration<double>>(steady_clock::now()-_start).count()*1000.0f/loop << " ms\n";
 

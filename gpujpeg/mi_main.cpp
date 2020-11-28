@@ -60,7 +60,7 @@ int main(int argc, char* argv[]) {
     gpujpeg_parameters params;
     gpujpeg_set_default_parameters(&params);        //default parameter
     //params.verbose = 1;//gpujpeg log
-    params.quality = 50;
+    params.quality = 80;
     params.interleaved = 1;
 
     gpujpeg_image_parameters image_param;
