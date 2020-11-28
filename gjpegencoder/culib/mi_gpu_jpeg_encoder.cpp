@@ -1,7 +1,8 @@
 #include "mi_gpu_jpeg_encoder.h"
 #include <chrono>
-extern "C" 
-cudaError_t rgb_2_yuv(const BlockUnit& rgb, const BlockUnit& yuv, const ImageInfo& img_info);
+
+extern "C"
+cudaError_t r_2_dct(const BlockUnit& rgb, const BlockUnit& dct_result, const ImageInfo& img_info, const DCTTable& dct_table);
 
 extern "C" 
 cudaError_t rgb_2_yuv_2_dct(const BlockUnit& rgb, const BlockUnit& dct_result, const ImageInfo& img_info, const DCTTable& dct_table);
@@ -134,11 +135,25 @@ inline void dct_table_apply_quality(unsigned char* table_raw, int quality) {
     }
 }
 
+const int ORDER_NATURAL[] = {
+     0,  1,  8, 16,  9,  2,  3, 10,
+    17, 24, 32, 25, 18, 11,  4,  5,
+    12, 19, 26, 33, 40, 48, 41, 34,
+    27, 20, 13,  6,  7, 14, 21, 28,
+    35, 42, 49, 56, 57, 50, 43, 36,
+    29, 22, 15, 23, 30, 37, 44, 51,
+    58, 59, 52, 45, 38, 31, 39, 46,
+    53, 60, 61, 54, 47, 55, 62, 63,
+    63, 63, 63, 63, 63, 63, 63, 63, // Extra entries for safety in decoder
+    63, 63, 63, 63, 63, 63, 63, 63
+};
+
 inline void init_qtable(unsigned char (&qt_raw)[64], float (&qt)[64]) {
     static const double aanscalefactor[8] = {
 	  1.0, 1.387039845, 1.306562965, 1.175875602,
 	  1.0, 0.785694958, 0.541196100, 0.275899379
 	};
+    //引用libjpeg的方法
     int i = 0;
     for (int row = 0; row<8; ++row) {
         for (int col = 0; col<8; ++col) {
@@ -146,6 +161,14 @@ inline void init_qtable(unsigned char (&qt_raw)[64], float (&qt)[64]) {
             ++i;
         }
     }
+
+
+    //这里引用gpujpeg的方法
+    // for( unsigned int i = 0; i < 64; i++ ) {
+    //     const unsigned int x = ORDER_NATURAL[i] % 8;
+    //     const unsigned int y = ORDER_NATURAL[i] / 8;
+    //     qt[x * 8 + y] = 1.0 / (qt_raw[i] * aanscalefactor[x] * aanscalefactor[y] * 8); // 8 is the gain of 2D DCT
+    // }
 }
 
 inline void compute_huffman_table(const unsigned char* bit_val_count_array, const unsigned char* val_array, BitString* huffman_table) {
@@ -248,7 +271,7 @@ GPUJpegEncoder::~GPUJpegEncoder() {
 
 }
 
-int GPUJpegEncoder::init(std::vector<int> qualitys, int restart_interval, std::shared_ptr<Image> rgb) {
+int GPUJpegEncoder::init(std::vector<int> qualitys, int restart_interval, std::shared_ptr<Image> rgb, bool gray) {
     _raw_image = rgb;
 
     _img_info.width = rgb->width;
@@ -260,6 +283,11 @@ int GPUJpegEncoder::init(std::vector<int> qualitys, int restart_interval, std::s
     _img_info.mcu_count = _img_info.mcu_w*_img_info.mcu_h;
     _img_info.segment_mcu_count = restart_interval;
     _img_info.segment_count = _img_info.mcu_count/_img_info.segment_mcu_count;
+    if (gray) {
+        _img_info.component = 1;
+    } else {
+        _img_info.component = 3;
+    }
 
     _raw_rgb.length = _img_info.width*_img_info.height*3;
 
@@ -403,7 +431,11 @@ int GPUJpegEncoder::compress(int quality, unsigned char*& compress_buffer, unsig
     {
         CudaTimeQuery t0;
         t0.begin();
-        err = rgb_2_yuv_2_dct(_raw_rgb, _dct_result, _img_info, _dct_table[quality]);
+        if (3 == _img_info.component) {
+            err = rgb_2_yuv_2_dct(_raw_rgb, _dct_result, _img_info, _dct_table[quality]);
+        } else {
+            err = r_2_dct(_raw_rgb, _dct_result, _img_info, _dct_table[quality]);
+        }
         CHECK_CUDA_ERROR(err)
         
         std::cout << "rgb_2_yuv_2_dct cost: " << t0.end() << " ms\n";
@@ -513,88 +545,151 @@ void GPUJpegEncoder::write_jpeg_header(int quality) {
 	write_byte(0);			// thumbWidth
 	write_byte(0);			// thumbHeight
 
-	//DQT
-	write_word(0xFFDB);		//marker = 0xFFDB
-	write_word(132);			//size=132
-	write_byte(0);			//QTYinfo== 0:  bit 0..3: number of QT = 0 (table for Y) 
-									//				bit 4..7: precision of QT
-									//				bit 8	: 0
+    if (3 == _img_info.component) {
+        //DQT
+        write_word(0xFFDB);		//marker = 0xFFDB
+        write_word(132);			//size=132
+        write_byte(0);			//QTYinfo== 0:  bit 0..3: number of QT = 0 (table for Y) 
+                                        //				bit 4..7: precision of QT
+                                        //				bit 8	: 0
 
-	write_byte_array(_dct_table[quality].quant_tbl_luminance, 64);		//YTable
-	write_byte(1);			//QTCbinfo = 1 (quantization table for Cb,Cr)
-	write_byte_array(_dct_table[quality].quant_tbl_chrominance, 64);	//CbCrTable
+        write_byte_array(_dct_table[quality].quant_tbl_luminance, 64);		//YTable
+        write_byte(1);			//QTCbinfo = 1 (quantization table for Cb,Cr)
+        write_byte_array(_dct_table[quality].quant_tbl_chrominance, 64);	//CbCrTable
 
-	//SOFO
-	write_word(0xFFC0);			//marker = 0xFFC0
-	write_word(17);				//length = 17 for a truecolor YCbCr JPG
-	write_byte(8);				//precision = 8: 8 bits/sample 
-	write_word(_img_info.height&0xFFFF);	//height
-	write_word(_img_info.width&0xFFFF);	//width
-	write_byte(3);				//nrofcomponents = 3: We encode a truecolor JPG
+        //SOFO
+        write_word(0xFFC0);			//marker = 0xFFC0
+        write_word(17);				//length = 17 for a truecolor YCbCr JPG
+        write_byte(8);				//precision = 8: 8 bits/sample 
+        write_word(_img_info.height&0xFFFF);	//height
+        write_word(_img_info.width&0xFFFF);	//width
 
-	write_byte(1);				//IdY = 1
-	write_byte(0x11);				//HVY sampling factors for Y (bit 0-3 vert., 4-7 hor.)(SubSamp 1x1)
-	write_byte(0);				//QTY  Quantization Table number for Y = 0
+        write_byte(3);				//nrofcomponents = 3: We encode a truecolor JPG
 
-	write_byte(2);				//IdCb = 2
-	write_byte(0x11);				//HVCb = 0x11(SubSamp 1x1)
-	write_byte(1);				//QTCb = 1
+        write_byte(1);				//IdY = 1
+        write_byte(0x11);				//HVY sampling factors for Y (bit 0-3 vert., 4-7 hor.)(SubSamp 1x1)
+        write_byte(0);				//QTY  Quantization Table number for Y = 0
 
-	write_byte(3);				//IdCr = 3
-	write_byte(0x11);				//HVCr = 0x11 (SubSamp 1x1)
-	write_byte(1);				//QTCr Normally equal to QTCb = 1
-	
-	//DHT
-    int hdt_len = (int)(
-	sizeof(BITS_DC_LUMINANCE) + 
-	sizeof(VAL_DC_LUMINANCE) +
-	sizeof(BITS_AC_LUMINANCE) + 
-	sizeof(VAL_AC_LUMINANCE) +
-	sizeof(BITS_DC_CHROMINANCE) + 
-	sizeof(VAL_DC_CHROMINANCE) +
-	sizeof(BITS_AC_CHROMINANCE) + 
-	sizeof(VAL_AC_CHROMINANCE) + 6);
+        write_byte(2);				//IdCb = 2
+        write_byte(0x11);				//HVCb = 0x11(SubSamp 1x1)
+        write_byte(1);				//QTCb = 1
 
-	write_word(0xFFC4);		//marker = 0xFFC4
-	//write_word(0x01A2);		//length = 0x01A2
-    write_word(hdt_len);		//length = 0x01A2
-	write_byte(0);			//HTYDCinfo bit 0..3	: number of HT (0..3), for Y =0
-									//			bit 4		: type of HT, 0 = DC table,1 = AC table
-									//			bit 5..7	: not used, must be 0
-	write_byte_array(BITS_DC_LUMINANCE, sizeof(BITS_DC_LUMINANCE));	//DC_L_NRC
-	write_byte_array(VAL_DC_LUMINANCE, sizeof(VAL_DC_LUMINANCE));		//DC_L_VALUE
-	write_byte(0x10);			//HTYACinfo
-	write_byte_array(BITS_AC_LUMINANCE, sizeof(BITS_AC_LUMINANCE));
-	write_byte_array(VAL_AC_LUMINANCE, sizeof(VAL_AC_LUMINANCE)); //we'll use the standard Huffman tables
-	write_byte(0x01);			//HTCbDCinfo
-	write_byte_array(BITS_DC_CHROMINANCE, sizeof(BITS_DC_CHROMINANCE));
-	write_byte_array(VAL_DC_CHROMINANCE, sizeof(VAL_DC_CHROMINANCE));
-	write_byte(0x11);			//HTCbACinfo
-	write_byte_array(BITS_AC_CHROMINANCE, sizeof(BITS_AC_CHROMINANCE));
-	write_byte_array(VAL_AC_CHROMINANCE, sizeof(VAL_AC_CHROMINANCE));
+        write_byte(3);				//IdCr = 3
+        write_byte(0x11);				//HVCr = 0x11 (SubSamp 1x1)
+        write_byte(1);				//QTCr Normally equal to QTCb = 1    
 
-    //DRI
-    write_word(0xFFDD);
-    write_word(4);
-    write_word(_img_info.segment_mcu_count);
+        //DHT
+        int hdt_len = (int)(
+        sizeof(BITS_DC_LUMINANCE) + 
+        sizeof(VAL_DC_LUMINANCE) +
+        sizeof(BITS_AC_LUMINANCE) + 
+        sizeof(VAL_AC_LUMINANCE) +
+        sizeof(BITS_DC_CHROMINANCE) + 
+        sizeof(VAL_DC_CHROMINANCE) +
+        sizeof(BITS_AC_CHROMINANCE) + 
+        sizeof(VAL_AC_CHROMINANCE) + 6);
 
-	//SOS
-	write_word(0xFFDA);		//marker = 0xFFC4
-	write_word(12);			//length = 12
-	write_byte(3);			//nrofcomponents, Should be 3: truecolor JPG
+        write_word(0xFFC4);		//marker = 0xFFC4
+        //write_word(0x01A2);		//length = 0x01A2
+        write_word(hdt_len);		//length = 0x01A2
+        write_byte(0);			//HTYDCinfo bit 0..3	: number of HT (0..3), for Y =0
+                                        //			bit 4		: type of HT, 0 = DC table,1 = AC table
+                                        //			bit 5..7	: not used, must be 0
+        write_byte_array(BITS_DC_LUMINANCE, sizeof(BITS_DC_LUMINANCE));	//DC_L_NRC
+        write_byte_array(VAL_DC_LUMINANCE, sizeof(VAL_DC_LUMINANCE));		//DC_L_VALUE
+        write_byte(0x10);			//HTYACinfo
+        write_byte_array(BITS_AC_LUMINANCE, sizeof(BITS_AC_LUMINANCE));
+        write_byte_array(VAL_AC_LUMINANCE, sizeof(VAL_AC_LUMINANCE)); //we'll use the standard Huffman tables
+        write_byte(0x01);			//HTCbDCinfo
+        write_byte_array(BITS_DC_CHROMINANCE, sizeof(BITS_DC_CHROMINANCE));
+        write_byte_array(VAL_DC_CHROMINANCE, sizeof(VAL_DC_CHROMINANCE));
+        write_byte(0x11);			//HTCbACinfo
+        write_byte_array(BITS_AC_CHROMINANCE, sizeof(BITS_AC_CHROMINANCE));
+        write_byte_array(VAL_AC_CHROMINANCE, sizeof(VAL_AC_CHROMINANCE));
 
-	write_byte(1);			//Idy=1
-	write_byte(0);			//HTY	bits 0..3: AC table (0..3)
-									//		bits 4..7: DC table (0..3)
-	write_byte(2);			//IdCb
-	write_byte(0x11);			//HTCb
+        //DRI
+        write_word(0xFFDD);
+        write_word(4);
+        write_word(_img_info.segment_mcu_count);
 
-	write_byte(3);			//IdCr
-	write_byte(0x11);			//HTCr
+        //SOS
+        write_word(0xFFDA);		//marker = 0xFFC4
+        write_word(12);			//length = 12
+        write_byte(3);			//nrofcomponents, Should be 3: truecolor JPG
 
-	write_byte(0);			//Ss not interesting, they should be 0,63,0
-	write_byte(0x3F);			//Se
-	write_byte(0);			//Bf
+        write_byte(1);			//Idy=1
+        write_byte(0);			//HTY	bits 0..3: AC table (0..3)
+                                        //		bits 4..7: DC table (0..3)
+        write_byte(2);			//IdCb
+        write_byte(0x11);			//HTCb
+
+        write_byte(3);			//IdCr
+        write_byte(0x11);			//HTCr
+
+        write_byte(0);			//Ss not interesting, they should be 0,63,0
+        write_byte(0x3F);			//Se
+        write_byte(0);			//Bf
+
+
+    } else {
+        //DQT
+        write_word(0xFFDB);		//marker = 0xFFDB
+        write_word(67);			//size=132
+        write_byte(0);			//QTYinfo== 0:  bit 0..3: number of QT = 0 (table for Y) 
+                                        //				bit 4..7: precision of QT
+                                        //				bit 8	: 0
+        write_byte_array(_dct_table[quality].quant_tbl_luminance, 64);		//YTable
+
+        //SOFO
+        write_word(0xFFC0);			//marker = 0xFFC0
+        write_word(11);				//length = 17 for a truecolor YCbCr JPG
+        write_byte(8);				//precision = 8: 8 bits/sample 
+        write_word(_img_info.height&0xFFFF);	//height
+        write_word(_img_info.width&0xFFFF);	//width
+
+        write_byte(1);				//nrofcomponents = 3: We encode a truecolor JPG
+
+        write_byte(1);				//IdY = 1
+        write_byte(0x11);				//HVY sampling factors for Y (bit 0-3 vert., 4-7 hor.)(SubSamp 1x1)
+        write_byte(0);				//QTY  Quantization Table number for Y = 0
+
+        //DHT
+        int hdt_len = (int)(
+        sizeof(BITS_DC_LUMINANCE) + 
+        sizeof(VAL_DC_LUMINANCE) +
+        sizeof(BITS_AC_LUMINANCE) + 
+        sizeof(VAL_AC_LUMINANCE) + 4);
+
+        write_word(0xFFC4);		//marker = 0xFFC4
+        //write_word(0x01A2);		//length = 0x01A2
+        write_word(hdt_len);		//length = 0x01A2
+        write_byte(0);			//HTYDCinfo bit 0..3	: number of HT (0..3), for Y =0
+                                        //			bit 4		: type of HT, 0 = DC table,1 = AC table
+                                        //			bit 5..7	: not used, must be 0
+        write_byte_array(BITS_DC_LUMINANCE, sizeof(BITS_DC_LUMINANCE));	//DC_L_NRC
+        write_byte_array(VAL_DC_LUMINANCE, sizeof(VAL_DC_LUMINANCE));		//DC_L_VALUE
+        write_byte(0x10);			//HTYACinfo
+        write_byte_array(BITS_AC_LUMINANCE, sizeof(BITS_AC_LUMINANCE));
+        write_byte_array(VAL_AC_LUMINANCE, sizeof(VAL_AC_LUMINANCE)); //we'll use the standard Huffman tables
+
+        //DRI
+        write_word(0xFFDD);
+        write_word(4);
+        write_word(_img_info.segment_mcu_count);
+
+        //SOS
+        write_word(0xFFDA);		//marker = 0xFFC4
+        write_word(8);			//length = 12
+        write_byte(1);			//nrofcomponents, Should be 3: truecolor JPG
+
+        write_byte(1);			//Idy=1
+        write_byte(0);			//HTY	bits 0..3: AC table (0..3)
+                                        //		bits 4..7: DC table (0..3)
+
+        write_byte(0);			//Ss not interesting, they should be 0,63,0
+        write_byte(0x3F);			//Se
+        write_byte(0);			//Bf
+    }	
 }
 
 void GPUJpegEncoder::write_jpeg_segment() {

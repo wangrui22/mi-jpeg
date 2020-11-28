@@ -52,7 +52,7 @@ int write_jpeg(int argc , char * argv[]) {
 
     jpeg_set_defaults(&cinfo);
     /*set the quality [0..100]  */
-    jpeg_set_quality(&cinfo, 75, static_cast<boolean>(true));
+    jpeg_set_quality(&cinfo, 80, static_cast<boolean>(true));
 
     jpeg_start_compress(&cinfo, static_cast<boolean>(true));
 

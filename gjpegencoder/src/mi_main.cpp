@@ -58,7 +58,7 @@ int main(int argc, char *argv[]) {
     qualitys.push_back(80);
     qualitys.push_back(100);
     GPUJpegEncoder encoder;
-    encoder.init(qualitys, 8, rgb_image);
+    encoder.init(qualitys, 8, rgb_image, true);
 
     steady_clock::time_point _start = steady_clock::now();    
     unsigned char* compress_buffer = nullptr;

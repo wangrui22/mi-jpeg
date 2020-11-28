@@ -65,6 +65,7 @@ struct ImageInfo {
     int mcu_count;
     int segment_mcu_count;
     int segment_count;
+    int component;
 };
 
 struct BlockUnit {

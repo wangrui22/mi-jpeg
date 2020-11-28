@@ -34,7 +34,7 @@ class GPUJpegEncoder {
 public:
     GPUJpegEncoder();
     ~GPUJpegEncoder();
-    int init(std::vector<int> qualitys, int restart_interval, std::shared_ptr<Image> rgb);
+    int init(std::vector<int> qualitys, int restart_interval, std::shared_ptr<Image> rgb, bool gray=false);
     int compress(int quality, unsigned char*& compress_buffer, unsigned int& buffer_len);
     
 public:
