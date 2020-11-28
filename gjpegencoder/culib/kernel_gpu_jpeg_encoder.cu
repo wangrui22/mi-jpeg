@@ -52,7 +52,7 @@ __global__ void kernel_rgb_2_yuv(const BlockUnit rgb, const BlockUnit yuv, const
 }
 
 template<typename T0, typename T>
-__device__ void dct_1d_8_fast(const T0 in0, const T0 in1, const T0 in2, const T0 in3, const T0 in4, const T0 in5, const T0 in6, const T0 in7,
+inline __device__ void dct_1d_8_fast(const T0 in0, const T0 in1, const T0 in2, const T0 in3, const T0 in4, const T0 in5, const T0 in6, const T0 in7,
     T & out0, T & out1, T & out2, T & out3, T & out4, T & out5, T & out6, T & out7, const float center_sample = 0.0f) {
     const float diff0 = in0 + in7;
     const float diff1 = in1 + in6;
@@ -94,6 +94,38 @@ __device__ void dct_1d_8_fast(const T0 in0, const T0 in1, const T0 in2, const T0
 __shared__ unsigned char _S_ZIG_ZAG[64];
 __shared__ float _S_DCT_TABLE[128];
 
+inline __device__ uint8_t gpujpeg_clamp(int value) {
+    value = (value >= 0) ? value : 0;
+    value = (value <= 255) ? value : 255;
+    return (uint8_t)value;
+}
+
+template<int bit_depth> inline __device__ void
+gpujpeg_color_transform_to(uint8_t & c1, uint8_t & c2, uint8_t & c3, const int matrix[9], int base1, int base2, int base3)
+{
+    // Prepare integer constants
+    const int middle = 1 << (bit_depth - 1);
+
+    // Perform color transform
+    int r1 = (int)c1 * 256 / 255;
+    int r2 = (int)c2 * 256 / 255;
+    int r3 = (int)c3 * 256 / 255;
+    c1 = gpujpeg_clamp(((matrix[0] * r1 + matrix[1] * r2 + matrix[2] * r3 + middle) >> bit_depth) + base1);
+    c2 = gpujpeg_clamp(((matrix[3] * r1 + matrix[4] * r2 + matrix[5] * r3 + middle) >> bit_depth) + base2);
+    c3 = gpujpeg_clamp(((matrix[6] * r1 + matrix[7] * r2 + matrix[8] * r3 + middle) >> bit_depth) + base3);
+}
+
+__device__ void rgb_2_yuv_unit(uint8_t & c1, uint8_t & c2, uint8_t & c3) {
+    /*const double matrix[] = {
+          0.299000,  0.587000,  0.114000,
+         -0.147400, -0.289500,  0.436900,
+          0.615000, -0.515000, -0.100000
+    };*/
+    const int matrix[] = {77, 150, 29, -38, -74, 112, 157, -132, -26};
+    gpujpeg_color_transform_to<8>(c1, c2, c3, matrix, 0, 128, 128);
+}
+
+
 __global__ void kernel_rgb_2_yuv_2_dct(const BlockUnit rgb, const BlockUnit dct_result, const ImageInfo img_info, const DCTTable dct_table) {
     unsigned int mcu_x = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned int mcu_y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -126,6 +158,7 @@ __global__ void kernel_rgb_2_yuv_2_dct(const BlockUnit rgb, const BlockUnit dct_
     int sidx = 0;
     int idx = 0;
     float r,g,b,y,u,v;
+    //unsigned char r,g,b;
     unsigned char yuv[64*3];
     for (int i=0; i<64*3; ++i) {
         yuv[i] = 0;
@@ -150,6 +183,16 @@ __global__ void kernel_rgb_2_yuv_2_dct(const BlockUnit rgb, const BlockUnit dct_
             yuv[sidx] = (unsigned char)y;
             yuv[sidx+64] = (unsigned char)u;
             yuv[sidx+128] = (unsigned char)v;
+            
+            //和调用rgb_2_yuv_unit性能上差别不大
+            // r = rgb.d_buffer[idx*3];
+            // g = rgb.d_buffer[idx*3+1];
+            // b = rgb.d_buffer[idx*3+2];
+            // rgb_2_yuv_unit(r,g,b);
+            // yuv[sidx] = r;
+            // yuv[sidx+64] = g;
+            // yuv[sidx+128] = b;
+
         }
     }
 
@@ -428,49 +471,17 @@ __global__ void kernel_huffman_writebits(const BlockUnit huffman_code, int *d_hu
     unsigned char* buffer = segment_compressed.d_buffer + segid*MAX_SEGMENT_BYTE;
     int segment_compressed_byte = 0;
     
-    // int new_byte=0, new_byte_pos=7;
-    // for (int m=mcu0; m<mcu1; ++m) {
-    //     BitString* huffman_code_seg = (BitString*)huffman_code.d_buffer+MCU_HUFFMAN_CAPACITY*3*m;
-    //     int* huffman_code_count_seg = d_huffman_code_count+3*m;
-    //     write_bitstring(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos, buffer+segment_compressed_byte, segment_compressed_byte);
-    //     huffman_code_seg += MCU_HUFFMAN_CAPACITY;
-    //     huffman_code_count_seg += 1;
-    //     write_bitstring(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos, buffer+segment_compressed_byte, segment_compressed_byte);
-    //     huffman_code_seg += MCU_HUFFMAN_CAPACITY;
-    //     huffman_code_count_seg += 1;
-    //     write_bitstring(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos, buffer+segment_compressed_byte, segment_compressed_byte);
-    // }
-    // if (new_byte_pos != 7) {
-    //     int bp = new_byte_pos;
-    //     int b = new_byte; 
-    //     int mask[8] = {1,2,4,8,16,32,64,128};
-    //     while (bp>=0) {
-    //         b = b | mask[bp];                
-    //         --bp;
-    //     }
-    //     write_byte((unsigned char)b, buffer+segment_compressed_byte, segment_compressed_byte);
-    //     new_byte_pos = 7;
-    //     new_byte = 0;
-    // }
-
     int new_byte=0, new_byte_pos=7;
-    int new_32bit=0, new_32bit_byte_idx=0;
     for (int m=mcu0; m<mcu1; ++m) {
         BitString* huffman_code_seg = (BitString*)huffman_code.d_buffer+MCU_HUFFMAN_CAPACITY*3*m;
         int* huffman_code_count_seg = d_huffman_code_count+3*m;
-        write_bitstring_ext(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos, new_32bit, new_32bit_byte_idx, buffer+segment_compressed_byte, segment_compressed_byte);
+        write_bitstring(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos, buffer+segment_compressed_byte, segment_compressed_byte);
         huffman_code_seg += MCU_HUFFMAN_CAPACITY;
         huffman_code_count_seg += 1;
-        write_bitstring_ext(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos, new_32bit, new_32bit_byte_idx, buffer+segment_compressed_byte, segment_compressed_byte);
+        write_bitstring(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos, buffer+segment_compressed_byte, segment_compressed_byte);
         huffman_code_seg += MCU_HUFFMAN_CAPACITY;
         huffman_code_count_seg += 1;
-        write_bitstring_ext(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos, new_32bit, new_32bit_byte_idx, buffer+segment_compressed_byte, segment_compressed_byte);
-    }
-    if (new_32bit_byte_idx != 0) {
-        for (int j=0; j<new_32bit_byte_idx; ++j) {
-            new_32bit >>= 8;
-            write_byte(new_32bit, buffer+segment_compressed_byte, segment_compressed_byte);
-        }
+        write_bitstring(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos, buffer+segment_compressed_byte, segment_compressed_byte);
     }
     if (new_byte_pos != 7) {
         int bp = new_byte_pos;
@@ -484,9 +495,38 @@ __global__ void kernel_huffman_writebits(const BlockUnit huffman_code, int *d_hu
         new_byte_pos = 7;
         new_byte = 0;
     }
-    write_byte(0xFF, buffer+segment_compressed_byte, segment_compressed_byte);
-    write_byte(0xFF, buffer+segment_compressed_byte, segment_compressed_byte);
 
+    // int new_byte=0, new_byte_pos=7;
+    // int new_32bit=0, new_32bit_byte_idx=0;
+    // for (int m=mcu0; m<mcu1; ++m) {
+    //     BitString* huffman_code_seg = (BitString*)huffman_code.d_buffer+MCU_HUFFMAN_CAPACITY*3*m;
+    //     int* huffman_code_count_seg = d_huffman_code_count+3*m;
+    //     write_bitstring_ext(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos, new_32bit, new_32bit_byte_idx, buffer+segment_compressed_byte, segment_compressed_byte);
+    //     huffman_code_seg += MCU_HUFFMAN_CAPACITY;
+    //     huffman_code_count_seg += 1;
+    //     write_bitstring_ext(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos, new_32bit, new_32bit_byte_idx, buffer+segment_compressed_byte, segment_compressed_byte);
+    //     huffman_code_seg += MCU_HUFFMAN_CAPACITY;
+    //     huffman_code_count_seg += 1;
+    //     write_bitstring_ext(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos, new_32bit, new_32bit_byte_idx, buffer+segment_compressed_byte, segment_compressed_byte);
+    // }
+    // if (new_32bit_byte_idx != 0) {
+    //     for (int j=0; j<new_32bit_byte_idx; ++j) {
+    //         new_32bit >>= 8;
+    //         write_byte(new_32bit, buffer+segment_compressed_byte, segment_compressed_byte);
+    //     }
+    // }
+    // if (new_byte_pos != 7) {
+    //     int bp = new_byte_pos;
+    //     int b = new_byte; 
+    //     int mask[8] = {1,2,4,8,16,32,64,128};
+    //     while (bp>=0) {
+    //         b = b | mask[bp];                
+    //         --bp;
+    //     }
+    //     write_byte((unsigned char)b, buffer+segment_compressed_byte, segment_compressed_byte);
+    //     new_byte_pos = 7;
+    //     new_byte = 0;
+    // }
 
     write_byte(0xFF, buffer+segment_compressed_byte, segment_compressed_byte);
     write_byte(0xD0+segid%8, buffer+segment_compressed_byte, segment_compressed_byte);

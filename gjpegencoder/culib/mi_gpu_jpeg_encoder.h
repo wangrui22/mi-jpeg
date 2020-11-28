@@ -61,8 +61,6 @@ private:
 
     BlockUnit _raw_rgb;
 
-    BlockUnit _yuv_ext;
-
     std::map<int, DCTTable> _dct_table;
     BlockUnit _dct_result;
 

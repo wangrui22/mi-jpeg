@@ -404,13 +404,6 @@ int GPUJpegEncoder::init(std::vector<int> qualitys, std::shared_ptr<Image> rgb) 
     err = cudaMemcpy(_raw_rgb.d_buffer, rgb->buffer, _raw_rgb.length, cudaMemcpyDefault);
     CHECK_CUDA_ERROR(err)
 
-    _yuv_ext.length = _img_info.width_ext*_img_info.height_ext*3;
-    err = cudaMalloc(&_yuv_ext.d_buffer, _yuv_ext.length);
-    CHECK_CUDA_ERROR(err)
-    err = cudaMemset(_yuv_ext.d_buffer, 0, _yuv_ext.length);
-    CHECK_CUDA_ERROR(err)
-
-
     _dct_result.length =_img_info.mcu_w*_img_info.mcu_h*64*3*sizeof(short);
     err = cudaMalloc(&_dct_result.d_buffer, _dct_result.length);
     CHECK_CUDA_ERROR(err)
@@ -457,16 +450,25 @@ int GPUJpegEncoder::compress(int quality, unsigned char*& compress_buffer, unsig
 
     cudaError_t err = cudaSuccess;
 
-    write_jpeg_header(quality);
+    // err = cudaMemset(_dct_result.d_buffer, 0, _dct_result.length);
+    // CHECK_CUDA_ERROR(err)
 
-    // {
-    //     CudaTimeQuery t0;
-    //     t0.begin();
-    //     err = rgb_2_yuv(_raw_rgb, _yuv_ext, _img_info);
-    //     CHECK_CUDA_ERROR(err)
-        
-    //     std::cout << "rgb_2_yuv cost: " << t0.end() << " ms\n";
-    // }
+    // err = cudaMemset(_huffman_result.d_buffer, 0, _huffman_result.length);
+    // CHECK_CUDA_ERROR(err)
+
+    // err = cudaMemset(_segment_compressed.d_buffer, 0, _segment_compressed.length);
+    // CHECK_CUDA_ERROR(err)
+
+    // err = cudaMemset(_segment_compressed_compact.d_buffer, 0, _segment_compressed_compact.length);
+    // CHECK_CUDA_ERROR(err)
+
+    err = cudaMemset(_d_segment_compressed_byte, 0, _img_info.segment_count*sizeof(int));
+    CHECK_CUDA_ERROR(err)
+    err = cudaMemset(_d_segment_compressed_offset, 0, _img_info.segment_count*sizeof(int));
+    CHECK_CUDA_ERROR(err)
+
+
+    write_jpeg_header(quality);
 
     {
         CudaTimeQuery t0;
