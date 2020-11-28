@@ -162,8 +162,14 @@ inline void compute_huffman_table(const unsigned char* bit_val_count_array, cons
 	}
 }
 
-const unsigned int BASIC_BYTE = 1024*1024*2;
+const unsigned int BASIC_BYTE = 1024*1024*10;
 const unsigned int MCU_HUFFMAN_CAPACITY = 256;
+
+inline void write_32bit(int val, unsigned char* buffer, unsigned int& byte) {
+    *((int*)buffer) = val;
+    byte += 4;
+}
+
 inline void write_word(unsigned short val, unsigned char* buffer, unsigned int& byte) {
     unsigned short val0 = ((val>>8)&0xFF) | ((val&0xFF)<<8);
     *((unsigned short*)buffer) = val0;
@@ -213,6 +219,61 @@ inline void write_bitstring(const BitString* bs, int counts, int& new_byte, int&
 			}
 		}
 	}
+}
+
+inline void write_bitstring_ext(const BitString* bs, int counts, int& new_byte, int& new_byte_pos, int& new_32bit, int& new_32bit_byte_idx, unsigned char* buffer, unsigned int& byte)
+{
+	const unsigned short mask[] = {1,2,4,8,16,32,64,128,256,512,1024,2048,4096,8192,16384,32768};
+	
+	for(int i=0; i<counts; ++i)
+	{
+		int value = bs[i].value;
+		int posval = bs[i].length - 1;
+
+		while (posval >= 0)
+		{
+			if ((value & mask[posval]) != 0)
+			{
+				new_byte = new_byte  | mask[new_byte_pos];
+			}
+			posval--;
+			new_byte_pos--;
+			if (new_byte_pos < 0)
+			{
+				// Write to stream
+                
+                new_32bit = new_32bit | new_byte << (new_32bit_byte_idx++*8);
+                if (new_32bit_byte_idx > 3) {
+                    ::write_32bit(new_32bit, buffer, byte);
+                    buffer += 4;
+                    new_32bit_byte_idx = 0;
+                    new_32bit = 0;
+                }
+
+
+				//::write_byte((unsigned char)(new_byte), buffer++, byte);
+				if (new_byte == 0xFF)
+				{
+					// Handle special case
+					//::write_byte((unsigned char)(0x00), buffer++, byte);
+
+                    new_32bit = new_32bit | 0x00 << (new_32bit_byte_idx++*8);
+                    if (new_32bit_byte_idx > 3) {
+                        ::write_32bit(new_32bit, buffer, byte);
+                        buffer += 4;
+                        new_32bit_byte_idx = 0;
+                        new_32bit = 0;
+                    }
+				}
+
+				// Reinitialize
+				new_byte_pos = 7;
+				new_byte = 0;
+			}
+		}
+	}
+
+    
 }
 
 const int MAX_SEGMENT_BYTE = 4096;
@@ -478,6 +539,10 @@ int GPUJpegEncoder::compress(int quality, unsigned char*& compress_buffer, unsig
     return 0;
 }
 
+void GPUJpegEncoder::write_32bit(int val) {
+    ::write_32bit(val, _compress_buffer+_compress_byte, _compress_byte);
+}
+
 void GPUJpegEncoder::write_word(unsigned short val) {
     ::write_word(val, _compress_buffer+_compress_byte, _compress_byte);
 }
@@ -492,6 +557,10 @@ void GPUJpegEncoder::write_byte_array(const unsigned char* buf, unsigned int buf
 
 void GPUJpegEncoder::write_bitstring(const BitString* bs, int counts, int& new_byte, int& new_byte_pos) {
     ::write_bitstring(bs, counts, new_byte, new_byte_pos, _compress_buffer+_compress_byte, _compress_byte);
+}
+
+void GPUJpegEncoder::write_bitstring_ext(const BitString* bs, int counts, int& new_byte, int& new_byte_pos, int& new_32bit, int& new_32bit_byte_idx) {
+    ::write_bitstring_ext(bs, counts, new_byte, new_byte_pos, new_32bit, new_32bit_byte_idx, _compress_buffer+_compress_byte, _compress_byte);
 }
 
 void GPUJpegEncoder::write_jpeg_header(int quality) {
@@ -617,7 +686,9 @@ void GPUJpegEncoder::write_jpeg_segment() {
     err = cudaMemcpy(huffman_code_count, _d_huffman_code_count, _img_info.mcu_w*_img_info.mcu_h*3*sizeof(int), cudaMemcpyDefault);
     CHECK_CUDA_ERROR(err)
 
-    int new_byte=0, new_byte_pos=7;
+
+    //连续没有restart interval
+    //int new_byte=0, new_byte_pos=7;
     // for (int i=0; i<_img_info.segment_count; ++i) {
     //     BitString* huffman_code_seg = huffman_code+MCU_HUFFMAN_CAPACITY*3*i;
     //     int* huffman_code_count_seg = huffman_code_count+3*i;
@@ -630,6 +701,45 @@ void GPUJpegEncoder::write_jpeg_segment() {
     //     write_bitstring(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos);
     // }
 
+
+    //有restart interval的segment
+    // for (int i=0; i<_img_info.segment_count; ++i) {
+    //     const int mcu0 = i*_img_info.segment_mcu_count;
+    //     int mcu1 = mcu0 + _img_info.segment_mcu_count;
+    //     if (mcu1 > _img_info.mcu_count-1) {
+    //         mcu1 = _img_info.mcu_count-1;
+    //     }
+    //     int new_byte=0, new_byte_pos=7;
+    //     for (int m=mcu0; m<mcu1; ++m) {
+    //         BitString* huffman_code_seg = huffman_code+MCU_HUFFMAN_CAPACITY*3*m;
+    //         int* huffman_code_count_seg = huffman_code_count+3*m;
+    //         write_bitstring(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos);
+    //         huffman_code_seg += MCU_HUFFMAN_CAPACITY;
+    //         huffman_code_count_seg += 1;
+    //         write_bitstring(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos);
+    //         huffman_code_seg += MCU_HUFFMAN_CAPACITY;
+    //         huffman_code_count_seg += 1;
+    //         write_bitstring(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos);
+            
+    //     }
+    //     if (new_byte_pos != 7) {
+    //         int bp = new_byte_pos;
+    //         int b = new_byte; 
+    //         int mask[8] = {1,2,4,8,16,32,64,128};
+    //         while (bp>=0) {
+    //             b = b | mask[bp];                
+    //             --bp;
+    //         }
+    //         write_byte((unsigned char)b);
+    //         new_byte_pos = 7;
+    //         new_byte = 0;
+    //     }
+
+    //     write_word(0xFFD0+i%8);
+    // }
+
+
+    //有restart interval的segment 用32bit写
     for (int i=0; i<_img_info.segment_count; ++i) {
         const int mcu0 = i*_img_info.segment_mcu_count;
         int mcu1 = mcu0 + _img_info.segment_mcu_count;
@@ -637,19 +747,25 @@ void GPUJpegEncoder::write_jpeg_segment() {
             mcu1 = _img_info.mcu_count-1;
         }
         int new_byte=0, new_byte_pos=7;
+        int new_32bit=0, new_32bit_byte_idx=0;
         for (int m=mcu0; m<mcu1; ++m) {
             BitString* huffman_code_seg = huffman_code+MCU_HUFFMAN_CAPACITY*3*m;
             int* huffman_code_count_seg = huffman_code_count+3*m;
-            write_bitstring(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos);
+            write_bitstring_ext(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos, new_32bit, new_32bit_byte_idx);
             huffman_code_seg += MCU_HUFFMAN_CAPACITY;
             huffman_code_count_seg += 1;
-            write_bitstring(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos);
+            write_bitstring_ext(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos, new_32bit, new_32bit_byte_idx);
             huffman_code_seg += MCU_HUFFMAN_CAPACITY;
             huffman_code_count_seg += 1;
-            write_bitstring(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos);
+            write_bitstring_ext(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos, new_32bit, new_32bit_byte_idx);
             
         }
-
+        if (new_32bit_byte_idx != 0) {
+            for (int j=0; j<new_32bit_byte_idx; ++j) {
+                new_32bit >>= 8;
+                write_byte(new_32bit);
+            }
+        }
         if (new_byte_pos != 7) {
             int bp = new_byte_pos;
             int b = new_byte; 

@@ -43,6 +43,9 @@ public:
     void write_byte_array(const unsigned char* buf, unsigned int buf_len);
     void write_bitstring(const BitString* bs, int counts, int& new_byte, int& new_byte_pos);
 
+    void write_32bit(int val);
+    void write_bitstring_ext(const BitString* bs, int counts, int& new_byte, int& new_byte_pos, int& new_32bit, int& new_32bit_byte_idx);
+
     void write_jpeg_header(int quality);
     void write_jpeg_segment();
     void write_jpeg_segment_gpu(int segment_compressed_byte);
