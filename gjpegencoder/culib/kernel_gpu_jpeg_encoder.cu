@@ -174,13 +174,16 @@ __global__ void kernel_rgb_2_yuv_2_dct(const BlockUnit rgb, const BlockUnit dct_
         }
 
         for (int i=0; i<64; ++i) {
-            float v = quant_local[i]*tbl[i];
-            if (v < 0.0f) {
-                v-=0.5f;
-            } else {
-                v+=0.5f;
-            }
-            quant_val[ZIGZAG_TABLE[i]] = (short)v;
+            // float v = quant_local[i]*tbl[i];
+            // if (v < 0.0f) {
+            //     //v-=0.5f;
+            //     printf("fu val %d\n", v);
+            // } else {
+            //     v+=0.5f;
+            // }
+            // quant_val[ZIGZAG_TABLE[i]] = (short)v;
+
+            quant_val[ZIGZAG_TABLE[i]] = (short)rintf(quant_local[i]*tbl[i]);
         }
     }
 
