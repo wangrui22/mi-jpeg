@@ -162,7 +162,7 @@ __global__ void kernel_rgb_2_yuv_2_dct(const BlockUnit rgb, const BlockUnit dct_
         for (int i=0; i<8; ++i) {
             unsigned char* i0 = val + 8*i;
             float* o0 = quant_local + 8*i;
-            dct_1d_8_fast<unsigned char, float>(i0[0], i0[1], i0[2], i0[3], i0[4], i0[5], i0[6], i0[7],
+            dct_1d_8_fast<unsigned char, float>((float)i0[0], (float)i0[1], (float)i0[2], (float)i0[3], (float)i0[4], (float)i0[5], (float)i0[6], (float)i0[7],
                         o0[0], o0[1], o0[2], o0[3], o0[4], o0[5], o0[6], o0[7], 128);
         }
 
@@ -182,8 +182,11 @@ __global__ void kernel_rgb_2_yuv_2_dct(const BlockUnit rgb, const BlockUnit dct_
             //     v+=0.5f;
             // }
             // quant_val[ZIGZAG_TABLE[i]] = (short)v;
+            
+            //quant_val[ZIGZAG_TABLE[i]] = (short)rintf(quant_local[i]*tbl[i]);
 
-            quant_val[ZIGZAG_TABLE[i]] = (short)rintf(quant_local[i]*tbl[i]);
+            //这里不要zigzag
+            quant_val[i] = (short)rintf(quant_local[i]*tbl[i]);
         }
     }
 
@@ -245,7 +248,7 @@ __global__ void kernel_r_2_dct(const BlockUnit rgb, const BlockUnit dct_result, 
         for (int i=0; i<8; ++i) {
             unsigned char* i0 = val + 8*i;
             float* o0 = quant_local + 8*i;
-            dct_1d_8_fast<unsigned char, float>(i0[0], i0[1], i0[2], i0[3], i0[4], i0[5], i0[6], i0[7],
+            dct_1d_8_fast<unsigned char, float>((float)i0[0], (float)i0[1], (float)i0[2], (float)i0[3], (float)i0[4], (float)i0[5], (float)i0[6], (float)i0[7],
                         o0[0], o0[1], o0[2], o0[3], o0[4], o0[5], o0[6], o0[7], 128);
         }
 
@@ -265,7 +268,9 @@ __global__ void kernel_r_2_dct(const BlockUnit rgb, const BlockUnit dct_result, 
             // }
             // quant_val[ZIGZAG_TABLE[i]] = (short)v;
 
-            quant_val[ZIGZAG_TABLE[i]] = (short)rintf(quant_local[i]*tbl[i]);
+            //quant_val[ZIGZAG_TABLE[i]] = (short)rintf(quant_local[i]*tbl[i]);
+            //这里不要zigzag
+            quant_val[i] = (short)rintf(quant_local[i]*tbl[i]);
         }
     //}
 
@@ -334,6 +339,7 @@ __global__ void kernel_huffman_encoding(const BlockUnit dct_result, const BlockU
     short *quant_base = (short*)dct_result.d_buffer + mcu_id*64*component;
     BitString* output_base = (BitString*)huffman_code.d_buffer + mcu_id*256*component;
     int* output_count = d_huffman_code_count + mcu_id*component;
+    int* order_natural = (int*)huffman_table.d_order_natural; 
     
     int segment_id = mcu_id/img_info.segment_mcu_count;
     int mcu_id_in_seg = mcu_id - segment_id*img_info.segment_mcu_count;
@@ -374,13 +380,13 @@ __global__ void kernel_huffman_encoding(const BlockUnit dct_result, const BlockU
         BitString SIXTEEN_ZEROS = HTAC[0xF0];
 
         int end_pos = 63;
-        while (end_pos > 0 && quant[end_pos] == 0 ) {
+        while (end_pos > 0 && quant[order_natural[end_pos]] == 0 ) {
             --end_pos;
         }
 
         for (int i=1; i<=end_pos; ) {
             int start_pos = i;
-            while(quant[i] == 0 && i <= end_pos) {
+            while(quant[order_natural[i]] == 0 && i <= end_pos) {
                 ++i;
             }
 
@@ -391,7 +397,7 @@ __global__ void kernel_huffman_encoding(const BlockUnit dct_result, const BlockU
                 zero_counts = zero_counts%16;
             }
 
-            BitString bs = get_bit_code(quant[i]);
+            BitString bs = get_bit_code(quant[order_natural[i]]);
 
             output[index++] = HTAC[(zero_counts << 4) | bs.length];
             output[index++] = bs;

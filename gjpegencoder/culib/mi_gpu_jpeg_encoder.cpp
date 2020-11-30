@@ -154,13 +154,13 @@ inline void init_qtable(unsigned char (&qt_raw)[64], float (&qt)[64]) {
 	  1.0, 0.785694958, 0.541196100, 0.275899379
 	};
     //引用libjpeg的方法
-    int i = 0;
-    for (int row = 0; row<8; ++row) {
-        for (int col = 0; col<8; ++col) {
-            qt[i] = 1.0 / (qt_raw[i]*aanscalefactor[row]*aanscalefactor[col]*8.0);
-            ++i;
-        }
-    }
+    // int i = 0;
+    // for (int row = 0; row<8; ++row) {
+    //     for (int col = 0; col<8; ++col) {
+    //         qt[i] = 1.0 / (qt_raw[i]*aanscalefactor[row]*aanscalefactor[col]*8.0);
+    //         ++i;
+    //     }
+    // }
 
 
     //这里引用gpujpeg的方法
@@ -169,6 +169,13 @@ inline void init_qtable(unsigned char (&qt_raw)[64], float (&qt)[64]) {
     //     const unsigned int y = ORDER_NATURAL[i] / 8;
     //     qt[x * 8 + y] = 1.0 / (qt_raw[i] * aanscalefactor[x] * aanscalefactor[y] * 8); // 8 is the gain of 2D DCT
     // }
+
+    //这里引用gpujpeg的方法, 但是 x 和 y是反的
+    for( unsigned int i = 0; i < 64; i++ ) {
+        const unsigned int y = ORDER_NATURAL[i] % 8;
+        const unsigned int x = ORDER_NATURAL[i] / 8;
+        qt[x * 8 + y] = 1.0 / (qt_raw[i] * aanscalefactor[x] * aanscalefactor[y] * 8); // 8 is the gain of 2D DCT
+    }
 }
 
 inline void compute_huffman_table(const unsigned char* bit_val_count_array, const unsigned char* val_array, BitString* huffman_table) {
@@ -354,6 +361,11 @@ int GPUJpegEncoder::init(std::vector<int> qualitys, int restart_interval, std::s
     err = cudaMalloc(&_huffman_table.d_huffman_table_CbCr_AC, sizeof(_huffman_table_CbCr_AC));
     CHECK_CUDA_ERROR(err)
     err = cudaMemcpy(_huffman_table.d_huffman_table_CbCr_AC, _huffman_table_CbCr_AC, sizeof(_huffman_table_CbCr_AC), cudaMemcpyDefault);
+    CHECK_CUDA_ERROR(err)
+
+    err = cudaMalloc(&_huffman_table.d_order_natural, sizeof(ORDER_NATURAL));
+    CHECK_CUDA_ERROR(err)
+    err = cudaMemcpy(_huffman_table.d_order_natural, ORDER_NATURAL, sizeof(ORDER_NATURAL), cudaMemcpyDefault);
     CHECK_CUDA_ERROR(err)
 
     //init segment

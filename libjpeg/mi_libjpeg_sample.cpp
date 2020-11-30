@@ -49,6 +49,10 @@ int write_jpeg(int argc , char * argv[]) {
     cinfo.image_height = height;
     cinfo.input_components = 3;
     cinfo.in_color_space = JCS_RGB;
+    cinfo.restart_interval = 8;
+    cinfo.dct_method = JDCT_IFAST;
+    cinfo.smoothing_factor = 0;
+    cinfo.MCU_rows_in_scan = 8;
 
     jpeg_set_defaults(&cinfo);
     /*set the quality [0..100]  */

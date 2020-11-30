@@ -1,8 +1,11 @@
 #include "mi_jpeg_encoder.h"
 #include <cmath>
+#include <fstream>
+#include <sstream>
+
 namespace {
 
-/** Default Quantization Table for Y component (zig-zag order)*/
+// /** Default Quantization Table for Y component (zig-zag order)*/
 static unsigned char default_quantization_luminance[64] = { 
   16,  11,  12,  14,  12,  10,  16,  14,
   13,  14,  18,  17,  16,  19,  24,  40,
@@ -25,6 +28,28 @@ static unsigned char default_quantization_chrominance[64] = {
   99,  99,  99,  99,  99,  99,  99,  99,
   99,  99,  99,  99,  99,  99,  99,  99
 };
+
+// static unsigned char default_quantization_luminance[64] = { 
+//   16,  11,  10,  16,  24,  40,  51,  61,
+//   12,  12,  14,  19,  26,  58,  60,  55,
+//   14,  13,  16,  24,  40,  57,  69,  56,
+//   14,  17,  22,  29,  51,  87,  80,  62,
+//   18,  22,  37,  56,  68, 109, 103,  77,
+//   24,  35,  55,  64,  81, 104, 113,  92,
+//   49,  64,  78,  87, 103, 121, 120, 101,
+//   72,  92,  95,  98, 112, 100, 103,  99
+// };
+
+// static unsigned char default_quantization_chrominance[64] = { 
+//   17,  18,  24,  47,  99,  99,  99,  99,
+//   18,  21,  26,  66,  99,  99,  99,  99,
+//   24,  26,  56,  99,  99,  99,  99,  99,
+//   47,  66,  99,  99,  99,  99,  99,  99,
+//   99,  99,  99,  99,  99,  99,  99,  99,
+//   99,  99,  99,  99,  99,  99,  99,  99,
+//   99,  99,  99,  99,  99,  99,  99,  99,
+//   99,  99,  99,  99,  99,  99,  99,  99
+// };
 
 static const unsigned char ZIGZAG_TABLE[64] = { 
 	0, 1, 5, 6,14,15,27,28,
@@ -145,19 +170,72 @@ inline void dct_1d_8_fast(const T0 in0, const T0 in1, const T0 in2, const T0 in3
     out7 = odd_diff1 - odd_diff4;
 }
 
+// inline void init_qtable(unsigned char (&qt_raw)[64], float (&qt)[64]) {
+//     static const double aanscalefactor[8] = {
+// 	  1.0, 1.387039845, 1.306562965, 1.175875602,
+// 	  1.0, 0.785694958, 0.541196100, 0.275899379
+// 	};
+//     int i = 0;
+//     for (int row = 0; row<8; ++row) {
+//         for (int col = 0; col<8; ++col) {
+//             qt[i] = 1.0 / (qt_raw[i]*aanscalefactor[row]*aanscalefactor[col]*8.0);
+//             ++i;
+//         }
+//     }
+// }
+
+const int ORDER_NATURAL[] = {
+     0,  1,  8, 16,  9,  2,  3, 10,
+    17, 24, 32, 25, 18, 11,  4,  5,
+    12, 19, 26, 33, 40, 48, 41, 34,
+    27, 20, 13,  6,  7, 14, 21, 28,
+    35, 42, 49, 56, 57, 50, 43, 36,
+    29, 22, 15, 23, 30, 37, 44, 51,
+    58, 59, 52, 45, 38, 31, 39, 46,
+    53, 60, 61, 54, 47, 55, 62, 63,
+    63, 63, 63, 63, 63, 63, 63, 63, // Extra entries for safety in decoder
+    63, 63, 63, 63, 63, 63, 63, 63
+};
+
 inline void init_qtable(unsigned char (&qt_raw)[64], float (&qt)[64]) {
+    /* For AA&N IDCT method, divisors are equal to quantization
+	 * coefficients scaled by scalefactor[row]*scalefactor[col], where
+	 *   scalefactor[0] = 1
+	 *   scalefactor[k] = cos(k*PI/16) * sqrt(2)    for k=1..7
+	 * We apply a further scale factor of 8.
+	 */
+
     static const double aanscalefactor[8] = {
 	  1.0, 1.387039845, 1.306562965, 1.175875602,
 	  1.0, 0.785694958, 0.541196100, 0.275899379
 	};
-    int i = 0;
-    for (int row = 0; row<8; ++row) {
-        for (int col = 0; col<8; ++col) {
-            qt[i] = 1.0 / (qt_raw[i]*aanscalefactor[row]*aanscalefactor[col]*8.0);
-            ++i;
-        }
+    
+
+    //引用libjpeg的方法
+    // int i = 0;
+    // for (int row = 0; row<8; ++row) {
+    //     for (int col = 0; col<8; ++col) {
+    //         qt[i] = 1.0 / (qt_raw[i]*aanscalefactor[row]*aanscalefactor[col]*8.0);
+    //         ++i;
+    //     }
+    // }
+
+
+    //这里引用gpujpeg的方法
+    // for( unsigned int i = 0; i < 64; i++ ) {
+    //     const unsigned int x = ORDER_NATURAL[i] % 8;
+    //     const unsigned int y = ORDER_NATURAL[i] / 8;
+    //     qt[x * 8 + y] = 1.0 / (qt_raw[i] * aanscalefactor[x] * aanscalefactor[y] * 8); // 8 is the gain of 2D DCT
+    // }
+
+    //这里引用gpujpeg的方法, 但是x 和 y是反的
+    for( unsigned int i = 0; i < 64; i++ ) {
+        const unsigned int y = ORDER_NATURAL[i] % 8;
+        const unsigned int x = ORDER_NATURAL[i] / 8;
+        qt[x * 8 + y] = 1.0 / (qt_raw[i] * aanscalefactor[x] * aanscalefactor[y] * 8); // 8 is the gain of 2D DCT
     }
 }
+
 
 inline void compute_huffman_table(const unsigned char* bit_val_count_array, const unsigned char* val_array, BitString* huffman_table) {
 	int pos_in_table = 0;
@@ -299,6 +377,13 @@ int JpegEncoder::compress(std::shared_ptr<Image> rgb, int quality, unsigned char
     std::vector<MCU> mcus;
     rgb_2_yuv(rgb, mcus);
 
+    float* quant_table = _quantization_table_luminance;
+    printf("quat table:\n");
+    for (int i=0; i<8; ++i) {
+        printf("%f %f %f %f %f %f %f %f\n", quant_table[i*8],quant_table[i*8+1],
+        quant_table[i*8+2],quant_table[i*8+3],quant_table[i*8+4],quant_table[i*8+5],quant_table[i*8+6],quant_table[i*8+7]);
+    }
+
     const int mcu_count = (int)mcus.size();
     for (int i=0; i<mcu_count; ++i) {
         MCU& mcu = mcus[i];
@@ -307,6 +392,79 @@ int JpegEncoder::compress(std::shared_ptr<Image> rgb, int quality, unsigned char
         dct_8x8(mcu.u, mcu.quat_u, _quantization_table_chrominance);
         dct_8x8(mcu.v, mcu.quat_v, _quantization_table_chrominance);
     }
+
+    //FOR test
+    // {   
+    //     short *quat0 = new short[mcu_count*64];
+    //     short *quat1 = new short[mcu_count*64];
+    //     short *quat2 = new short[mcu_count*64];
+    //     for (int i=0; i<mcu_count; ++i) {
+    //         MCU& mcu = mcus[i];
+    //         memcpy(quat0+i*64, mcu.quat_y, 64*2);
+    //         memcpy(quat1+i*64, mcu.quat_u, 64*2);
+    //         memcpy(quat2+i*64, mcu.quat_v, 64*2);
+    //     }
+        
+    //     short * quat_host[3] = {quat0, quat1, quat2};
+    //     for (int comp=0; comp<3; ++comp) {
+    //         std::stringstream ss;
+    //         ss << "/home/wangrui22/projects/mi-jpeg/data/cjpegencoder-quat-" << mcu_count << "-" << comp << ".raw";
+    //         std::ofstream out(ss.str().c_str(), std::ios::binary|std::ios::out);
+    //         if(out.is_open()) {
+    //            out.write((char*)(quat_host[comp]), mcu_count*sizeof(short)*64);
+    //            out.close();
+    //         }
+    //     }
+    // }
+
+    //FOR test
+    // {
+    //     std::string quat_gpujpeg_f = "/home/wangrui22/projects/mi-jpeg/data/gpujpeg-quat-16384-0.raw";
+
+    //     const int mcu_count = 16384;
+    //     unsigned int len = mcu_count*64;
+    //     short* quat_gpujpeg_raw = new short[len];
+    //     std::ifstream in(quat_gpujpeg_f, std::ios::binary | std::ios::in);
+    //     if (!in.is_open()) {
+    //         return -1;
+    //     }
+    //     in.read((char*)quat_gpujpeg_raw, len*2);
+    //     in.close();
+
+    //     int idx = 0;
+    //     for (int i=0; i<mcu_count; ++i) {
+    //         MCU& mcu = mcus[i];
+    //         int sidx = 0;
+    //         for (int i=0; i<64; ++i) {
+    //             mcu.quat_y[sidx++] = quat_gpujpeg_raw[idx++];
+    //         }
+            
+    //     }
+
+    // }
+
+    // {
+    //     unsigned char *data0 = new unsigned char[mcu_count*64];
+    //     unsigned char *data1 = new unsigned char[mcu_count*64];
+    //     unsigned char *data2 = new unsigned char[mcu_count*64];
+    //     for (int i=0; i<mcu_count; ++i) {
+    //         MCU& mcu = mcus[i];
+    //         memcpy(data0+i*64, mcu.y, 64);
+    //         memcpy(data1+i*64, mcu.u, 64);
+    //         memcpy(data2+i*64, mcu.v, 64);
+    //     }
+        
+    //     unsigned char * data_host[3] = {data0, data1, data2};
+    //     for (int comp=0; comp<3; ++comp) {
+    //         std::stringstream ss;
+    //         ss << "/home/wangrui22/projects/mi-jpeg/data/cjpegencoder-data-" << mcu_count << "-" << comp << ".raw";
+    //         std::ofstream out(ss.str().c_str(), std::ios::binary|std::ios::out);
+    //         if(out.is_open()) {
+    //            out.write((char*)(data_host[comp]), mcu_count*64);
+    //            out.close();
+    //         }
+    //     }
+    // }
     
     for (int i=0; i<_img_info.segment_count; ++i) {
         const int mcu0 = i*_img_info.segment_mcu_count;
@@ -443,58 +601,152 @@ void JpegEncoder::rgb_2_yuv(std::shared_ptr<Image> rgb, std::vector<MCU>& mcus) 
 
             } 
         }
+
+        // std::cout << "\n<><><><><><><><>mcu: " << i << "<><><><><><><><>\n";
+        // int idx0 = 0;
+        // for (int y00=0; y00<8; ++y00) {
+        //     for (int x00=0; x00<8; ++x00) {
+        //         std::cout << (int)mcus[i].y[idx0++] << " ";
+        //     }
+        //     std::cout << "\n";
+        // }
+
+        
     }
 }
 
+
+static void jpeg_fdct_float (float* data, unsigned char* sample_data)
+{
+  float tmp0, tmp1, tmp2, tmp3, tmp4, tmp5, tmp6, tmp7;
+  float tmp10, tmp11, tmp12, tmp13;
+  float z1, z2, z3, z4, z5, z11, z13;
+  float *dataptr;
+  unsigned char* elemptr;
+  int ctr;
+  const int DCTSIZE = 8; 
+  const float CENTERJSAMPLE = 128.0f;
+
+  /* Pass 1: process rows. */
+
+  dataptr = data;
+  for (ctr = 0; ctr < DCTSIZE; ctr++) {
+    elemptr = sample_data + ctr*DCTSIZE;
+
+    /* Load data into workspace */
+    tmp0 = (float)(elemptr[0]) + (float)(elemptr[7]);
+    tmp7 = (float)(elemptr[0]) - (float)(elemptr[7]);
+    tmp1 = (float)(elemptr[1]) + (float)(elemptr[6]);
+    tmp6 = (float)(elemptr[1]) - (float)(elemptr[6]);
+    tmp2 = (float)(elemptr[2]) + (float)(elemptr[5]);
+    tmp5 = (float)(elemptr[2]) - (float)(elemptr[5]);
+    tmp3 = (float)(elemptr[3]) + (float)(elemptr[4]);
+    tmp4 = (float)(elemptr[3]) - (float)(elemptr[4]);
+
+    /* Even part */
+
+    tmp10 = tmp0 + tmp3;	/* phase 2 */
+    tmp13 = tmp0 - tmp3;
+    tmp11 = tmp1 + tmp2;
+    tmp12 = tmp1 - tmp2;
+
+    /* Apply unsigned->signed conversion. */
+    dataptr[0] = tmp10 + tmp11 - 8 * CENTERJSAMPLE; /* phase 3 */
+    dataptr[4] = tmp10 - tmp11;
+
+    z1 = (tmp12 + tmp13) * ((float) 0.707106781); /* c4 */
+    dataptr[2] = tmp13 + z1;	/* phase 5 */
+    dataptr[6] = tmp13 - z1;
+
+    /* Odd part */
+
+    tmp10 = tmp4 + tmp5;	/* phase 2 */
+    tmp11 = tmp5 + tmp6;
+    tmp12 = tmp6 + tmp7;
+
+    /* The rotator is modified from fig 4-8 to avoid extra negations. */
+    z5 = (tmp10 - tmp12) * ((float) 0.382683433); /* c6 */
+    z2 = ((float) 0.541196100) * tmp10 + z5; /* c2-c6 */
+    z4 = ((float) 1.306562965) * tmp12 + z5; /* c2+c6 */
+    z3 = tmp11 * ((float) 0.707106781); /* c4 */
+
+    z11 = tmp7 + z3;		/* phase 5 */
+    z13 = tmp7 - z3;
+
+    dataptr[5] = z13 + z2;	/* phase 6 */
+    dataptr[3] = z13 - z2;
+    dataptr[1] = z11 + z4;
+    dataptr[7] = z11 - z4;
+
+    dataptr += DCTSIZE;		/* advance pointer to next row */
+  }
+
+  /* Pass 2: process columns. */
+
+  dataptr = data;
+  for (ctr = DCTSIZE-1; ctr >= 0; ctr--) {
+    tmp0 = dataptr[DCTSIZE*0] + dataptr[DCTSIZE*7];
+    tmp7 = dataptr[DCTSIZE*0] - dataptr[DCTSIZE*7];
+    tmp1 = dataptr[DCTSIZE*1] + dataptr[DCTSIZE*6];
+    tmp6 = dataptr[DCTSIZE*1] - dataptr[DCTSIZE*6];
+    tmp2 = dataptr[DCTSIZE*2] + dataptr[DCTSIZE*5];
+    tmp5 = dataptr[DCTSIZE*2] - dataptr[DCTSIZE*5];
+    tmp3 = dataptr[DCTSIZE*3] + dataptr[DCTSIZE*4];
+    tmp4 = dataptr[DCTSIZE*3] - dataptr[DCTSIZE*4];
+
+    /* Even part */
+
+    tmp10 = tmp0 + tmp3;	/* phase 2 */
+    tmp13 = tmp0 - tmp3;
+    tmp11 = tmp1 + tmp2;
+    tmp12 = tmp1 - tmp2;
+
+    dataptr[DCTSIZE*0] = tmp10 + tmp11; /* phase 3 */
+    dataptr[DCTSIZE*4] = tmp10 - tmp11;
+
+    z1 = (tmp12 + tmp13) * ((float) 0.707106781); /* c4 */
+    dataptr[DCTSIZE*2] = tmp13 + z1; /* phase 5 */
+    dataptr[DCTSIZE*6] = tmp13 - z1;
+
+    /* Odd part */
+
+    tmp10 = tmp4 + tmp5;	/* phase 2 */
+    tmp11 = tmp5 + tmp6;
+    tmp12 = tmp6 + tmp7;
+
+    /* The rotator is modified from fig 4-8 to avoid extra negations. */
+    z5 = (tmp10 - tmp12) * ((float) 0.382683433); /* c6 */
+    z2 = ((float) 0.541196100) * tmp10 + z5; /* c2-c6 */
+    z4 = ((float) 1.306562965) * tmp12 + z5; /* c2+c6 */
+    z3 = tmp11 * ((float) 0.707106781); /* c4 */
+
+    z11 = tmp7 + z3;		/* phase 5 */
+    z13 = tmp7 - z3;
+
+    dataptr[DCTSIZE*5] = z13 + z2; /* phase 6 */
+    dataptr[DCTSIZE*3] = z13 - z2;
+    dataptr[DCTSIZE*1] = z11 + z4;
+    dataptr[DCTSIZE*7] = z11 - z4;
+
+    dataptr++;			/* advance pointer to next column */
+  }
+}
+
 void JpegEncoder::dct_8x8(unsigned char* val, short* output, float* quant_table) {
-    // //row 1d-dct
-    // for (int i=0; i<8; ++i) {
-    //     unsigned char* i0 = val + 8*i;
-    //     short* o0 = output + 8*i;
-    //     dct_1d_8_fast<unsigned char, short>(i0[0], i0[1], i0[2], i0[3], i0[4], i0[5], i0[6], i0[7],
-    //                   o0[0], o0[1], o0[2], o0[3], o0[4], o0[5], o0[6], o0[7], 128);
-    // }
-
-    // //collum 1d-dct
-    // for (int i=0; i<8; ++i) {
-    //     short* i0 = output + i;
-    //     short* o0 = output + i;
-    //     dct_1d_8_fast<short, short>(i0[0], i0[1*8], i0[2*8], i0[3*8], i0[4*8], i0[5*8], i0[6*8], i0[7*8],
-    //                   o0[0], o0[1*8], o0[2*8], o0[3*8], o0[4*8], o0[5*8], o0[6*8], o0[7*8], 0);
-    // }
-
-	// for (int i=0; i<64; ++i) {
-    //     output[i] = (short)(output[i]*quant_table[i] + 0.5f);
-    // }
-
-
-
-	float quat[64];
-	//row 1d-dct
-    for (int i=0; i<8; ++i) {
-        unsigned char* i0 = val + 8*i;
-        float* o0 = quat + 8*i;
-        dct_1d_8_fast<unsigned char, float>(i0[0], i0[1], i0[2], i0[3], i0[4], i0[5], i0[6], i0[7],
-                      o0[0], o0[1], o0[2], o0[3], o0[4], o0[5], o0[6], o0[7], 128);
-    }
-
-    //collum 1d-dct
-    for (int i=0; i<8; ++i) {
-        float* i0 = quat + i;
-        float* o0 = quat + i;
-        dct_1d_8_fast<float, float>(i0[0], i0[1*8], i0[2*8], i0[3*8], i0[4*8], i0[5*8], i0[6*8], i0[7*8],
-                      o0[0], o0[1*8], o0[2*8], o0[3*8], o0[4*8], o0[5*8], o0[6*8], o0[7*8], 0);
-    }
+    float quat[64];
+    jpeg_fdct_float(quat, val);
 
     //quantization
     for (int i=0; i<64; ++i) {
 		float v = quat[i]*quant_table[i];
-		if (v < 0.0f) {
-			v-=0.5f;
-		} else {
-			v+=0.5f;
-		}
-        output[ZIGZAG_TABLE[i]] = (short)v;
+		// if (v < 0.0f) {
+		// 	v-=0.5f;
+		// } else {
+		// 	v+=0.5f;
+		// }
+        // //output[ZIGZAG_TABLE[i]] = (short)v;
+        // output[i] = (short)v;
+        output[i] = rintf(v);
     }
 }
 
@@ -518,13 +770,13 @@ void JpegEncoder::huffman_encode_8x8(short* quant, short preDC,
 	BitString SIXTEEN_ZEROS = HTAC[0xF0];
 
     int end_pos = 63;
-    while (end_pos > 0 && quant[end_pos] == 0 ) {
+    while (end_pos > 0 && quant[ORDER_NATURAL[end_pos]] == 0 ) {
         --end_pos;
     }
 
     for (int i=1; i<=end_pos; ) {
         int start_pos = i;
-		while(quant[i] == 0 && i <= end_pos) {
+		while(quant[ORDER_NATURAL[i]] == 0 && i <= end_pos) {
             ++i;
         }
 
@@ -535,7 +787,7 @@ void JpegEncoder::huffman_encode_8x8(short* quant, short preDC,
 			zero_counts = zero_counts%16;
 		}
 
-		BitString bs = get_bit_code(quant[i]);
+		BitString bs = get_bit_code(quant[ORDER_NATURAL[i]]);
 
 		output[index++] = HTAC[(zero_counts << 4) | bs.length];
 		output[index++] = bs;

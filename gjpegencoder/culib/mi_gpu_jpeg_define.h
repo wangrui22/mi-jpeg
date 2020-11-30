@@ -53,6 +53,7 @@ struct HuffmanTable {
     BitString *d_huffman_table_Y_AC;//[256]
     BitString *d_huffman_table_CbCr_DC;//[12]
     BitString *d_huffman_table_CbCr_AC;//[256]
+    unsigned char *d_order_natural;//[80]
 };
 
 struct ImageInfo {

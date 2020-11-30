@@ -35,10 +35,16 @@ int main(int argc, char *argv[]) {
     unsigned char* rgb = new unsigned char[width*height*3];
     std::string file_path = "/home/wangrui22/projects/mi-jpeg/data/gray1-1920-1080-rgb.raw";
 
+    // int width = 512;
+    // int height = 512;
+    // unsigned char* rgb = new unsigned char[width*height*3];
+    // std::string file_path = "/home/wangrui22/projects/mi-jpeg/data/gray3-512-512-rgb.raw";
+
     // int width = 4000;
     // int height = 2087;
     // unsigned char* rgb = new unsigned char[width*height*3];
     // std::string file_path = "/home/wangrui22/projects/mi-jpeg/data/color1-4000-2087.raw";
+
 
     std::ifstream in(file_path, std::ios::binary | std::ios::in);
     if (!in.is_open()) {
@@ -48,13 +54,36 @@ int main(int argc, char *argv[]) {
     in.close();
 
 
+
+    // unsigned char rgb[64*3] = {
+    //     153,153,153, 123,123,123, 123,123,123, 123,123,123, 123,123,123, 123,123,123, 123,123,123, 136,136,136,
+    //     192,192,192, 180,180,180, 136,136,136, 154,154,154, 154,154,154, 154,154,154, 136,136,136, 110,110,110,
+    //     254,254,254, 198,198,198, 154,154,154, 154,154,154, 180,180,180, 154,154,154, 123,123,123, 123,123,123,
+    //     239,239,239, 180,180,180, 136,136,136, 180,180,180, 180,180,180, 166,166,166, 123,123,123, 123,123,123,
+    //     180,180,180, 154,154,154, 136,136,136, 167,167,167, 166,166,166, 149,149,149, 136,136,136, 136,136,136,
+    //     128,128,128, 136,136,136, 123,123,123, 136,136,136, 154,154,154, 180,180,180, 198,198,198, 154,154,154,
+    //     123,123,123, 105,105,105, 110,110,110, 149,149,149, 136,136,136, 136,136,136, 180,180,180, 166,166,166,
+    //     110,110,110, 136,136,136, 123,123,123, 123,123,123, 123,123,123, 136,136,136, 154,154,154, 136,136,136
+    // };
+    // int width = 8;
+    // int height = 8;
+
+    // {
+    //     std::ofstream out("/home/wangrui22/projects/mi-jpeg/data/gray2-8-8-rgb.raw", std::ios::out|std::ios::binary);
+    //     if (out.is_open()) {
+    //         out.write((char*)rgb, width*height*3);
+    //         out.close();
+    //         //return 0;
+    //     }
+    // }
+
+
     std::shared_ptr<Image> rgb_image(new Image());
     rgb_image->buffer = rgb;
     rgb_image->width = width;
     rgb_image->height = height;
 
     std::vector<int> qualitys;
-    qualitys.push_back(50);
     qualitys.push_back(80);
     qualitys.push_back(100);
     GPUJpegEncoder encoder;
@@ -63,7 +92,7 @@ int main(int argc, char *argv[]) {
     steady_clock::time_point _start = steady_clock::now();    
     unsigned char* compress_buffer = nullptr;
     unsigned int compress_buffer_len = 0;
-    const int loop = 100;
+    const int loop = 1;
     for (int i=0; i<loop; ++i) {
         encoder.compress(80, compress_buffer, compress_buffer_len);
     }

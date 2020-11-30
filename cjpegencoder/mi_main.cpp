@@ -26,15 +26,27 @@ int main(int argc, char * argv[]) {
     //     }
     // }
 
+    // int width = 8;
+    // int height = 8;
+    // unsigned char* rgb = new unsigned char[width*height*3];
+    // std::string file_path = "/home/wangrui22/projects/mi-jpeg/data/gray2-8-8-rgb.raw";
+
     int width = 1920;
     int height = 1080;
     unsigned char* rgb = new unsigned char[width*height*3];
     std::string file_path = "/home/wangrui22/projects/mi-jpeg/data/gray1-1920-1080-rgb.raw";
 
+    // int width = 1024;
+    // int height = 1024;
+    // unsigned char* rgb = new unsigned char[width*height*3];
+    // std::string file_path = "/home/wangrui22/projects/mi-jpeg/data/gray3-1024-1024-rgb.raw";
+
     // int width = 4000;
     // int height = 2087;
     // unsigned char* rgb = new unsigned char[width*height*3];
     // std::string file_path = "/home/wangrui22/projects/mi-jpeg/data/color1-4000-2087.raw";
+
+
 
     std::ifstream in(file_path, std::ios::binary | std::ios::in);
     if (!in.is_open()) {
