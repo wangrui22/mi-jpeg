@@ -510,7 +510,7 @@ int GPUJpegEncoder::compress(int quality, unsigned char*& compress_buffer, unsig
 
     buffer_len = _compress_byte;
     compress_buffer = _compress_buffer;
-    std::cout << "gpu jpeg compress cost " << duration_cast<duration<double>>(steady_clock::now()-_start).count()*1000 << " ms\n";
+    std::cout << "gpu jpeg compress cost " << duration_cast<duration<double>>(steady_clock::now()-_start).count()*1000 << " ms\n\n";
 
     return 0;
 }

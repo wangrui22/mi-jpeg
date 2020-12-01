@@ -2,6 +2,121 @@
 #include <cuda_runtime.h>
 #include "mi_gpu_jpeg_define.h"
 
+__device__ void jpeg_fdct_8x8(float* data, unsigned char* sample_data) {
+    float tmp0, tmp1, tmp2, tmp3, tmp4, tmp5, tmp6, tmp7;
+    float tmp10, tmp11, tmp12, tmp13;
+    float z1, z2, z3, z4, z5, z11, z13;
+    float *dataptr;
+    unsigned char* elemptr;
+    int ctr;
+    const int DCTSIZE = 8; 
+    const float CENTERJSAMPLE = 128.0f;
+
+    /* Pass 1: process rows. */
+
+    dataptr = data;
+    for (ctr = 0; ctr < DCTSIZE; ctr++) {
+        elemptr = sample_data + ctr*DCTSIZE;
+
+        /* Load data into workspace */
+        tmp0 = (float)(elemptr[0]) + (float)(elemptr[7]);
+        tmp7 = (float)(elemptr[0]) - (float)(elemptr[7]);
+        tmp1 = (float)(elemptr[1]) + (float)(elemptr[6]);
+        tmp6 = (float)(elemptr[1]) - (float)(elemptr[6]);
+        tmp2 = (float)(elemptr[2]) + (float)(elemptr[5]);
+        tmp5 = (float)(elemptr[2]) - (float)(elemptr[5]);
+        tmp3 = (float)(elemptr[3]) + (float)(elemptr[4]);
+        tmp4 = (float)(elemptr[3]) - (float)(elemptr[4]);
+
+        /* Even part */
+
+        tmp10 = tmp0 + tmp3;	/* phase 2 */
+        tmp13 = tmp0 - tmp3;
+        tmp11 = tmp1 + tmp2;
+        tmp12 = tmp1 - tmp2;
+
+        /* Apply unsigned->signed conversion. */
+        dataptr[0] = tmp10 + tmp11 - 8 * CENTERJSAMPLE; /* phase 3 */
+        dataptr[4] = tmp10 - tmp11;
+
+        z1 = (tmp12 + tmp13) * ((float) 0.707106781); /* c4 */
+        dataptr[2] = tmp13 + z1;	/* phase 5 */
+        dataptr[6] = tmp13 - z1;
+
+        /* Odd part */
+
+        tmp10 = tmp4 + tmp5;	/* phase 2 */
+        tmp11 = tmp5 + tmp6;
+        tmp12 = tmp6 + tmp7;
+
+        /* The rotator is modified from fig 4-8 to avoid extra negations. */
+        z5 = (tmp10 - tmp12) * ((float) 0.382683433); /* c6 */
+        z2 = ((float) 0.541196100) * tmp10 + z5; /* c2-c6 */
+        z4 = ((float) 1.306562965) * tmp12 + z5; /* c2+c6 */
+        z3 = tmp11 * ((float) 0.707106781); /* c4 */
+
+        z11 = tmp7 + z3;		/* phase 5 */
+        z13 = tmp7 - z3;
+
+        dataptr[5] = z13 + z2;	/* phase 6 */
+        dataptr[3] = z13 - z2;
+        dataptr[1] = z11 + z4;
+        dataptr[7] = z11 - z4;
+
+        dataptr += DCTSIZE;		/* advance pointer to next row */
+    }
+
+    /* Pass 2: process columns. */
+
+    dataptr = data;
+    for (ctr = DCTSIZE-1; ctr >= 0; ctr--) {
+        tmp0 = dataptr[DCTSIZE*0] + dataptr[DCTSIZE*7];
+        tmp7 = dataptr[DCTSIZE*0] - dataptr[DCTSIZE*7];
+        tmp1 = dataptr[DCTSIZE*1] + dataptr[DCTSIZE*6];
+        tmp6 = dataptr[DCTSIZE*1] - dataptr[DCTSIZE*6];
+        tmp2 = dataptr[DCTSIZE*2] + dataptr[DCTSIZE*5];
+        tmp5 = dataptr[DCTSIZE*2] - dataptr[DCTSIZE*5];
+        tmp3 = dataptr[DCTSIZE*3] + dataptr[DCTSIZE*4];
+        tmp4 = dataptr[DCTSIZE*3] - dataptr[DCTSIZE*4];
+
+        /* Even part */
+
+        tmp10 = tmp0 + tmp3;	/* phase 2 */
+        tmp13 = tmp0 - tmp3;
+        tmp11 = tmp1 + tmp2;
+        tmp12 = tmp1 - tmp2;
+
+        dataptr[DCTSIZE*0] = tmp10 + tmp11; /* phase 3 */
+        dataptr[DCTSIZE*4] = tmp10 - tmp11;
+
+        z1 = (tmp12 + tmp13) * ((float) 0.707106781); /* c4 */
+        dataptr[DCTSIZE*2] = tmp13 + z1; /* phase 5 */
+        dataptr[DCTSIZE*6] = tmp13 - z1;
+
+        /* Odd part */
+
+        tmp10 = tmp4 + tmp5;	/* phase 2 */
+        tmp11 = tmp5 + tmp6;
+        tmp12 = tmp6 + tmp7;
+
+        /* The rotator is modified from fig 4-8 to avoid extra negations. */
+        z5 = (tmp10 - tmp12) * ((float) 0.382683433); /* c6 */
+        z2 = ((float) 0.541196100) * tmp10 + z5; /* c2-c6 */
+        z4 = ((float) 1.306562965) * tmp12 + z5; /* c2+c6 */
+        z3 = tmp11 * ((float) 0.707106781); /* c4 */
+
+        z11 = tmp7 + z3;		/* phase 5 */
+        z13 = tmp7 - z3;
+
+        dataptr[DCTSIZE*5] = z13 + z2; /* phase 6 */
+        dataptr[DCTSIZE*3] = z13 - z2;
+        dataptr[DCTSIZE*1] = z11 + z4;
+        dataptr[DCTSIZE*7] = z11 - z4;
+
+        dataptr++;			/* advance pointer to next column */
+    }
+}
+
 template<typename T0, typename T>
 inline __device__ void dct_1d_8_fast(const T0 in0, const T0 in1, const T0 in2, const T0 in3, const T0 in4, const T0 in5, const T0 in6, const T0 in7,
     T & out0, T & out1, T & out2, T & out3, T & out4, T & out5, T & out6, T & out7, const float center_sample = 0.0f) {
@@ -45,14 +160,14 @@ inline __device__ void dct_1d_8_fast(const T0 in0, const T0 in1, const T0 in2, c
 __shared__ unsigned char _S_ZIG_ZAG[64];
 __shared__ float _S_DCT_TABLE[128];
 
-inline __device__ uint8_t gpujpeg_clamp(int value) {
+inline __device__ unsigned char gpujpeg_clamp(int value) {
     value = (value >= 0) ? value : 0;
     value = (value <= 255) ? value : 255;
-    return (uint8_t)value;
+    return (unsigned char)value;
 }
 
 template<int bit_depth> inline __device__ void
-gpujpeg_color_transform_to(uint8_t & c1, uint8_t & c2, uint8_t & c3, const int matrix[9], int base1, int base2, int base3)
+gpujpeg_color_transform_to(unsigned char & c1, unsigned char & c2, unsigned char & c3, const int matrix[9], int base1, int base2, int base3)
 {
     // Prepare integer constants
     const int middle = 1 << (bit_depth - 1);
@@ -66,7 +181,7 @@ gpujpeg_color_transform_to(uint8_t & c1, uint8_t & c2, uint8_t & c3, const int m
     c3 = gpujpeg_clamp(((matrix[6] * r1 + matrix[7] * r2 + matrix[8] * r3 + middle) >> bit_depth) + base3);
 }
 
-__device__ void rgb_2_yuv_unit(uint8_t & c1, uint8_t & c2, uint8_t & c3) {
+__device__ void rgb_2_yuv_unit(unsigned char & c1, unsigned char & c2, unsigned char & c3) {
     /*const double matrix[] = {
           0.299000,  0.587000,  0.114000,
          -0.147400, -0.289500,  0.436900,
@@ -240,40 +355,149 @@ __global__ void kernel_r_2_dct(const BlockUnit rgb, const BlockUnit dct_result, 
     short *quant_base = (short*)dct_result.d_buffer + mcu_id*64*component;
     unsigned char* ZIGZAG_TABLE = _S_ZIG_ZAG;
 
-    //for (int j=0; j<3; ++j) {
-        short *quant_val = quant_base;
-        unsigned char *val = yuv;
-        float* tbl = _S_DCT_TABLE;
+    short *quant_val = quant_base;
+    unsigned char *val = yuv;
+    float* tbl = _S_DCT_TABLE;
 
-        for (int i=0; i<8; ++i) {
-            unsigned char* i0 = val + 8*i;
-            float* o0 = quant_local + 8*i;
-            dct_1d_8_fast<unsigned char, float>((float)i0[0], (float)i0[1], (float)i0[2], (float)i0[3], (float)i0[4], (float)i0[5], (float)i0[6], (float)i0[7],
-                        o0[0], o0[1], o0[2], o0[3], o0[4], o0[5], o0[6], o0[7], 128);
-        }
+    jpeg_fdct_8x8(quant_local, val);
 
-        for (int i=0; i<8; ++i) {
-            float* i0 = quant_local + i;
-            float* o0 = quant_local + i;
-            dct_1d_8_fast<float, float>(i0[0], i0[1*8], i0[2*8], i0[3*8], i0[4*8], i0[5*8], i0[6*8], i0[7*8],
-                        o0[0], o0[1*8], o0[2*8], o0[3*8], o0[4*8], o0[5*8], o0[6*8], o0[7*8], 0);
-        }
+    // for (int i=0; i<8; ++i) {
+    //     unsigned char* i0 = val + 8*i;
+    //     float* o0 = quant_local + 8*i;
+    //     dct_1d_8_fast<unsigned char, float>((float)i0[0], (float)i0[1], (float)i0[2], (float)i0[3], (float)i0[4], (float)i0[5], (float)i0[6], (float)i0[7],
+    //                 o0[0], o0[1], o0[2], o0[3], o0[4], o0[5], o0[6], o0[7], 128);
+    // }
 
+    // for (int i=0; i<8; ++i) {
+    //     float* i0 = quant_local + i;
+    //     float* o0 = quant_local + i;
+    //     dct_1d_8_fast<float, float>(i0[0], i0[1*8], i0[2*8], i0[3*8], i0[4*8], i0[5*8], i0[6*8], i0[7*8],
+    //                 o0[0], o0[1*8], o0[2*8], o0[3*8], o0[4*8], o0[5*8], o0[6*8], o0[7*8], 0);
+    // }
+
+    // for (int i=0; i<64; ++i) {
+    //     // float v = quant_local[i]*tbl[i];
+    //     // if (v < 0.0f) {
+    //     //     v-=0.5f;
+    //     // } else {
+    //     //     v+=0.5f;
+    //     // }
+    //     // quant_val[ZIGZAG_TABLE[i]] = (short)v;
+
+    //     //quant_val[ZIGZAG_TABLE[i]] = (short)rintf(quant_local[i]*tbl[i]);
+    //     //这里不要zigzag
+    //     quant_val[i] = (short)rintf(quant_local[i]*tbl[i]);
+    // }
+
+    int out0,out1,out2,out3,out4,out5,out6,out7;
+    for (int i=0; i<8; ++i) {
+        int id = i*8;
+        out0 = rintf(quant_local[id]*tbl[id]);
+        out1 = rintf(quant_local[id+1]*tbl[id+1]);
+        out2 = rintf(quant_local[id+2]*tbl[id+2]);
+        out3 = rintf(quant_local[id+3]*tbl[id+3]);
+        out4 = rintf(quant_local[id+4]*tbl[id+4]);
+        out5 = rintf(quant_local[id+5]*tbl[id+5]);
+        out6 = rintf(quant_local[id+6]*tbl[id+6]);
+        out7 = rintf(quant_local[id+7]*tbl[id+7]);
+
+        ((uint4*)(quant_base))[i] = make_uint4(
+            (out0 & 0xFFFF) + (out1 << 16),
+            (out2 & 0xFFFF) + (out3 << 16),
+            (out4 & 0xFFFF) + (out5 << 16),
+            (out6 & 0xFFFF) + (out7 << 16)
+        );   
+    }
+}
+
+__global__ void kernel_r_2_dct_ext(const BlockUnit rgb, const BlockUnit dct_result, const ImageInfo img_info, const DCTTable dct_table, int CAL_UNIT) {
+    unsigned int mcu_x0 = (blockIdx.x * blockDim.x + threadIdx.x)*CAL_UNIT;
+    unsigned int mcu_y0 = (blockIdx.y * blockDim.y + threadIdx.y)*CAL_UNIT;
+
+    if (mcu_x0 > img_info.mcu_w-1 || mcu_y0 > img_info.mcu_h-1) {
+        return;
+    }
+
+    const int component = img_info.component;
+    if (threadIdx.x == 0) {
         for (int i=0; i<64; ++i) {
-            // float v = quant_local[i]*tbl[i];
-            // if (v < 0.0f) {
-            //     v-=0.5f;
-            // } else {
-            //     v+=0.5f;
-            // }
-            // quant_val[ZIGZAG_TABLE[i]] = (short)v;
-
-            //quant_val[ZIGZAG_TABLE[i]] = (short)rintf(quant_local[i]*tbl[i]);
-            //这里不要zigzag
-            quant_val[i] = (short)rintf(quant_local[i]*tbl[i]);
+            _S_ZIG_ZAG[i] = dct_table.d_zig_zag[i];
+            _S_DCT_TABLE[i] = dct_table.d_quant_tbl_luminance[i];
+            //_S_DCT_TABLE[i+64] = dct_table.d_quant_tbl_chrominance[i];
         }
-    //}
+    }
+    __syncthreads();
 
+    unsigned int mcu_x1 = mcu_x0+CAL_UNIT;
+    if (mcu_x1 > img_info.mcu_w-1) {
+        mcu_x1 = img_info.mcu_w-1;
+    }
+    unsigned int mcu_y1 = mcu_y0+CAL_UNIT;
+    if (mcu_y1 > img_info.mcu_h-1) {
+        mcu_y1 = img_info.mcu_h-1;
+    }
+
+    for (int mcu_y = mcu_y0; mcu_y < mcu_y1; ++mcu_y) {
+        for (int mcu_x = mcu_x0; mcu_x < mcu_x1; ++mcu_x) {
+            int mcu_id = mcu_y*img_info.mcu_w + mcu_x;
+
+            int width = img_info.width;
+            int height = img_info.height;
+            //int width_ext = img_info.width_ext;
+            //int height_ext = img_info.height_ext;
+
+            int x0 = mcu_x * 8;
+            int y0 = mcu_y * 8;
+            int x1 = x0 + 8;
+            int y1 = y0 + 8;
+            y1 = y1 < height ? y1 : height;
+            x1 = x1 < width ? x1 : width;
+
+            int sidx = 0;
+            int idx = 0;
+            unsigned char yuv[64];
+            for (int i=0; i<64; ++i) {
+                yuv[i] = 0;
+            }
+            for (int iy=y0; iy<y1; ++iy) {
+                for (int ix=x0; ix<x1; ++ix) {
+                    idx = iy*width + ix;
+                    sidx = (iy-y0)*8 + (ix-x0);
+                    yuv[sidx] =rgb.d_buffer[idx*3];
+                }
+            }
+
+            float quant_local[64];
+            short *quant_base = (short*)dct_result.d_buffer + mcu_id*64*component;
+            unsigned char* ZIGZAG_TABLE = _S_ZIG_ZAG;
+
+            short *quant_val = quant_base;
+            unsigned char *val = yuv;
+            float* tbl = _S_DCT_TABLE;
+
+            jpeg_fdct_8x8(quant_local, val);
+
+            int out0,out1,out2,out3,out4,out5,out6,out7;
+            for (int i=0; i<8; ++i) {
+                int id = i*8;
+                out0 = rintf(quant_local[id]*tbl[id]);
+                out1 = rintf(quant_local[id+1]*tbl[id+1]);
+                out2 = rintf(quant_local[id+2]*tbl[id+2]);
+                out3 = rintf(quant_local[id+3]*tbl[id+3]);
+                out4 = rintf(quant_local[id+4]*tbl[id+4]);
+                out5 = rintf(quant_local[id+5]*tbl[id+5]);
+                out6 = rintf(quant_local[id+6]*tbl[id+6]);
+                out7 = rintf(quant_local[id+7]*tbl[id+7]);
+
+                ((uint4*)(quant_base))[i] = make_uint4(
+                    (out0 & 0xFFFF) + (out1 << 16),
+                    (out2 & 0xFFFF) + (out3 << 16),
+                    (out4 & 0xFFFF) + (out5 << 16),
+                    (out6 & 0xFFFF) + (out7 << 16)
+                );   
+            }
+        }
+    }
 }
 
 
@@ -409,10 +633,6 @@ __global__ void kernel_huffman_encoding(const BlockUnit dct_result, const BlockU
         }
 
         output_count[j] = index;
-
-        if (index >= 256) {
-            printf("err\n");
-        }
     }
 
 }
@@ -498,9 +718,9 @@ __global__ void kernel_huffman_writebits(const BlockUnit huffman_code, int *d_hu
     write_byte(0xFF, buffer+segment_compressed_byte, segment_compressed_byte);
     write_byte(0xD0+segid%8, buffer+segment_compressed_byte, segment_compressed_byte);
 
-    if (segment_compressed_byte > 4095) {
-        printf("segment byte error: %d\n", segment_compressed_byte);   
-    }
+    // if (segment_compressed_byte > 4095) {
+    //     printf("segment byte error: %d\n", segment_compressed_byte);   
+    // }
     d_segment_compressed_byte[segid] = segment_compressed_byte;
 }
 
@@ -517,9 +737,9 @@ __global__ void kernel_segment_offset(const ImageInfo img_info, int *d_segment_c
         val += d_segment_compressed_byte[i];
     }
     d_segment_compressed_offset[segid] = val;
-    if (segid == img_info.segment_count-1) {
-        printf("last segment offset: %d\n", val);
-    }
+    // if (segid == img_info.segment_count-1) {
+    //     printf("last segment offset: %d\n", val);
+    // }
 }
 
 __global__ void kernel_segment_compact(const BlockUnit segment_compressed, const ImageInfo img_info, int *d_segment_compressed_byte, int *d_segment_compressed_offset, const BlockUnit segment_compressed_compact) {
@@ -558,20 +778,43 @@ cudaError_t rgb_2_yuv_2_dct(const BlockUnit& rgb, const BlockUnit& dct_result, c
 
 extern "C"
 cudaError_t r_2_dct(const BlockUnit& rgb, const BlockUnit& dct_result, const ImageInfo& img_info, const DCTTable& dct_table) {
-    const int BLOCK_SIZEX = 4;
-    const int BLOCK_SIZEY = 4;
+    const int BLOCK_SIZEX = 8;
+    const int BLOCK_SIZEY = 8;
+    const int CAL_UNIT = 2;
+    int w = img_info.mcu_w / CAL_UNIT;
+    if (CAL_UNIT*w != img_info.mcu_w) {
+        w += 1;
+    }
+    int h = img_info.mcu_h / CAL_UNIT;
+    if (CAL_UNIT*h != img_info.mcu_h) {
+        h += 1;
+    }
+
     dim3 block(BLOCK_SIZEX, BLOCK_SIZEY, 1);
-    dim3 grid(img_info.mcu_w / BLOCK_SIZEX, img_info.mcu_h / BLOCK_SIZEY);
-    if (grid.x * BLOCK_SIZEX != img_info.mcu_w) {
+    dim3 grid(w / BLOCK_SIZEX, h / BLOCK_SIZEY);
+    if (grid.x * BLOCK_SIZEX != w) {
         grid.x += 1;
     }
-    if (grid.y * BLOCK_SIZEY != img_info.mcu_h) {
+    if (grid.y * BLOCK_SIZEY != h) {
         grid.y += 1;
     }
 
-    kernel_r_2_dct << <grid, block >> >(rgb, dct_result, img_info, dct_table);
+    kernel_r_2_dct_ext << <grid, block >> >(rgb, dct_result, img_info, dct_table, CAL_UNIT);
+
+    // const int BLOCK_SIZEX = 8;
+    // const int BLOCK_SIZEY = 8;
+    // dim3 block(BLOCK_SIZEX, BLOCK_SIZEY, 1);
+    // dim3 grid(img_info.mcu_w / BLOCK_SIZEX, img_info.mcu_h / BLOCK_SIZEY);
+    // if (grid.x * BLOCK_SIZEX != img_info.mcu_w) {
+    //     grid.x += 1;
+    // }
+    // if (grid.y * BLOCK_SIZEY != img_info.mcu_h) {
+    //     grid.y += 1;
+    // }
+
+    // kernel_r_2_dct << <grid, block >> >(rgb, dct_result, img_info, dct_table);
     
-    return cudaDeviceSynchronize();
+    // return cudaDeviceSynchronize();
 }
 
 extern "C"
