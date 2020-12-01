@@ -519,6 +519,7 @@ __shared__ BitString _S_huffman_table_Y_DC[12];
 __shared__ BitString _S_huffman_table_Y_AC[256];
 __shared__ BitString _S_huffman_table_CbCr_DC[12];
 __shared__ BitString _S_huffman_table_CbCr_AC[256];
+__shared__ int _S_ORDER_NATURAL[80];
 
 __global__ void kernel_huffman_encoding(const BlockUnit dct_result, const BlockUnit huffman_code, int *d_huffman_code_count, const ImageInfo img_info, const HuffmanTable huffman_table) {
     unsigned int mcu_x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -527,18 +528,15 @@ __global__ void kernel_huffman_encoding(const BlockUnit dct_result, const BlockU
         return;
     }
     const int component = img_info.component;
-    // if (threadIdx.x == 0) {
-    //     for (int i=0; i<12; ++i) {
-    //         _S_huffman_table_Y_DC[i] = huffman_table.d_huffman_table_Y_DC[i];
-    //         _S_huffman_table_CbCr_DC[i] = huffman_table.d_huffman_table_CbCr_DC[i];
-    //     }
-    //     for (int i=0; i<256; ++i) {
-    //         _S_huffman_table_Y_AC[i] = huffman_table.d_huffman_table_Y_AC[i];
-    //         _S_huffman_table_CbCr_AC[i] = huffman_table.d_huffman_table_CbCr_AC[i];
-    //     }
-        
-    // }
-    // __syncthreads();
+    int* order_natural_ori = (int*)huffman_table.d_order_natural;
+    int idxxx = threadIdx.y*blockDim.x + threadIdx.x;
+    if (idxxx < 16) {
+        _S_ORDER_NATURAL[idxxx*4] = order_natural_ori[idxxx*4];
+        _S_ORDER_NATURAL[idxxx*4+1] = order_natural_ori[idxxx*4+1];
+        _S_ORDER_NATURAL[idxxx*4+2] = order_natural_ori[idxxx*4+2];
+        _S_ORDER_NATURAL[idxxx*4+3] = order_natural_ori[idxxx*4+3];
+    }
+    __syncthreads();
 
     int mcu_id = mcu_y*img_info.mcu_w + mcu_x;
 
@@ -557,13 +555,14 @@ __global__ void kernel_huffman_encoding(const BlockUnit dct_result, const BlockU
 
     BitString* HTDCs[3] = {huffman_table.d_huffman_table_Y_DC, huffman_table.d_huffman_table_CbCr_DC, huffman_table.d_huffman_table_CbCr_DC};
     BitString* HTACs[3] = {huffman_table.d_huffman_table_Y_AC, huffman_table.d_huffman_table_CbCr_AC, huffman_table.d_huffman_table_CbCr_AC};
-    // BitString* HTDCs[3] = {_S_huffman_table_Y_DC, _S_huffman_table_CbCr_DC, _S_huffman_table_CbCr_DC};
-    // BitString* HTACs[3] = {_S_huffman_table_Y_AC, _S_huffman_table_CbCr_AC, _S_huffman_table_CbCr_AC};
+    //BitString* HTDCs[3] = {_S_huffman_table_Y_DC, _S_huffman_table_CbCr_DC, _S_huffman_table_CbCr_DC};
+    //BitString* HTACs[3] = {_S_huffman_table_Y_AC, _S_huffman_table_CbCr_AC, _S_huffman_table_CbCr_AC};
 
     short *quant_base = (short*)dct_result.d_buffer + mcu_id*64*component;
     BitString* output_base = (BitString*)huffman_code.d_buffer + mcu_id*256*component;
     int* output_count = d_huffman_code_count + mcu_id*component;
-    int* order_natural = (int*)huffman_table.d_order_natural; 
+    //int* order_natural = (int*)huffman_table.d_order_natural; 
+    int* order_natural = _S_ORDER_NATURAL; 
     
     int segment_id = mcu_id/img_info.segment_mcu_count;
     int mcu_id_in_seg = mcu_id - segment_id*img_info.segment_mcu_count;
@@ -694,13 +693,6 @@ __global__ void kernel_huffman_writebits(const BlockUnit huffman_code, int *d_hu
             huffman_code_seg += MCU_HUFFMAN_CAPACITY;
             huffman_code_count_seg += 1;    
         }
-        // write_bitstring(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos, buffer+segment_compressed_byte, segment_compressed_byte);
-        // huffman_code_seg += MCU_HUFFMAN_CAPACITY;
-        // huffman_code_count_seg += 1;
-        // write_bitstring(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos, buffer+segment_compressed_byte, segment_compressed_byte);
-        // huffman_code_seg += MCU_HUFFMAN_CAPACITY;
-        // huffman_code_count_seg += 1;
-        // write_bitstring(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos, buffer+segment_compressed_byte, segment_compressed_byte);
     }
     if (new_byte_pos != 7) {
         int bp = new_byte_pos;
@@ -814,7 +806,7 @@ cudaError_t r_2_dct(const BlockUnit& rgb, const BlockUnit& dct_result, const Ima
 
     // kernel_r_2_dct << <grid, block >> >(rgb, dct_result, img_info, dct_table);
     
-    // return cudaDeviceSynchronize();
+    return cudaDeviceSynchronize();
 }
 
 extern "C"
