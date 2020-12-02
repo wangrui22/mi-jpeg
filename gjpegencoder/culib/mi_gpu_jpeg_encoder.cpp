@@ -5,6 +5,9 @@ extern "C"
 cudaError_t r_2_dct(const BlockUnit& rgb, const BlockUnit& dct_result, const ImageInfo& img_info, const DCTTable& dct_table);
 
 extern "C" 
+cudaError_t gpujpeg_r_dct(const BlockUnit& rgb, const BlockUnit& dct_result, const ImageInfo& img_info, const DCTTable& dct_table);
+
+extern "C" 
 cudaError_t rgb_2_yuv_2_dct(const BlockUnit& rgb, const BlockUnit& dct_result, const ImageInfo& img_info, const DCTTable& dct_table);
 
 extern "C"
@@ -164,18 +167,18 @@ inline void init_qtable(unsigned char (&qt_raw)[64], float (&qt)[64]) {
 
 
     //这里引用gpujpeg的方法
-    // for( unsigned int i = 0; i < 64; i++ ) {
-    //     const unsigned int x = ORDER_NATURAL[i] % 8;
-    //     const unsigned int y = ORDER_NATURAL[i] / 8;
-    //     qt[x * 8 + y] = 1.0 / (qt_raw[i] * aanscalefactor[x] * aanscalefactor[y] * 8); // 8 is the gain of 2D DCT
-    // }
-
-    //这里引用gpujpeg的方法, 但是 x 和 y是反的
     for( unsigned int i = 0; i < 64; i++ ) {
-        const unsigned int y = ORDER_NATURAL[i] % 8;
-        const unsigned int x = ORDER_NATURAL[i] / 8;
+        const unsigned int x = ORDER_NATURAL[i] % 8;
+        const unsigned int y = ORDER_NATURAL[i] / 8;
         qt[x * 8 + y] = 1.0 / (qt_raw[i] * aanscalefactor[x] * aanscalefactor[y] * 8); // 8 is the gain of 2D DCT
     }
+
+    //这里引用gpujpeg的方法, 但是 x 和 y是反的
+    // for( unsigned int i = 0; i < 64; i++ ) {
+    //     const unsigned int y = ORDER_NATURAL[i] % 8;
+    //     const unsigned int x = ORDER_NATURAL[i] / 8;
+    //     qt[x * 8 + y] = 1.0 / (qt_raw[i] * aanscalefactor[x] * aanscalefactor[y] * 8); // 8 is the gain of 2D DCT
+    // }
 }
 
 inline void compute_huffman_table(const unsigned char* bit_val_count_array, const unsigned char* val_array, BitString* huffman_table) {
@@ -446,7 +449,8 @@ int GPUJpegEncoder::compress(int quality, unsigned char*& compress_buffer, unsig
         if (3 == _img_info.component) {
             err = rgb_2_yuv_2_dct(_raw_rgb, _dct_result, _img_info, _dct_table[quality]);
         } else {
-            err = r_2_dct(_raw_rgb, _dct_result, _img_info, _dct_table[quality]);
+            //err = r_2_dct(_raw_rgb, _dct_result, _img_info, _dct_table[quality]);
+            err = gpujpeg_r_dct(_raw_rgb, _dct_result, _img_info, _dct_table[quality]);
         }
         CHECK_CUDA_ERROR(err)
         
