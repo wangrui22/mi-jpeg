@@ -292,7 +292,7 @@ int GPUJpegEncoder::init(std::vector<int> qualitys, int restart_interval, std::s
     _img_info.mcu_h = _img_info.height_ext/8;
     _img_info.mcu_count = _img_info.mcu_w*_img_info.mcu_h;
     _img_info.segment_mcu_count = restart_interval;
-    _img_info.segment_count = _img_info.mcu_count/_img_info.segment_mcu_count;
+    _img_info.segment_count = div_and_round_up(_img_info.mcu_count, _img_info.segment_mcu_count);
     if (gray) {
         _img_info.component = 1;
     } else {

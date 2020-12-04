@@ -48,7 +48,7 @@ gpujpeg_dct_gpu(const T in0, const T in1, const T in2, const T in3, const T in4,
 }
 
 template <int WARP_COUNT>
-__global__ void gpujpeg_dct_gpu_kernel(int block_count_x, int block_count_y, uint8_t* source, const unsigned int source_stride,
+__global__ void gpujpeg_dct_gpu_kernel(int block_count_x, int block_count_y, unsigned char* source, const unsigned int source_stride,
                        int16_t* output, int output_stride, const float * const quant_table)
 {
     // each warp processes 4 8x8 blocks (horizontally neighboring)
@@ -94,7 +94,7 @@ __global__ void gpujpeg_dct_gpu_kernel(int block_count_x, int block_count_y, uin
     const int in_x = (block_offset_x + block_idx_x) * 8 + dct_idx;
     const int in_y = (block_offset_y + block_idx_y) * 8;
     const int in_offset = in_x + in_y * source_stride;
-    const uint8_t * in = source + in_offset*3;
+    const unsigned char * in = source + in_offset*3;
 
     // load all 8 coefficients of thread's column, but do NOT apply level shift now - will be applied as part of DCT
     dct_t src0 = *in;
@@ -352,11 +352,6 @@ __device__ void rgb_2_yuv_unit(unsigned char & c1, unsigned char & c2, unsigned 
 
 
 __global__ void kernel_rgb_2_yuv_2_dct(const BlockUnit rgb, const BlockUnit dct_result, const ImageInfo img_info, const DCTTable dct_table) {
-    unsigned int mcu_x = blockIdx.x * blockDim.x + threadIdx.x;
-    unsigned int mcu_y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (mcu_x > img_info.mcu_w-1 || mcu_y > img_info.mcu_h-1) {
-        return;
-    }
     if (threadIdx.x == 0) {
         for (int i=0; i<64; ++i) {
             _S_ZIG_ZAG[i] = dct_table.d_zig_zag[i];
@@ -365,6 +360,12 @@ __global__ void kernel_rgb_2_yuv_2_dct(const BlockUnit rgb, const BlockUnit dct_
         }
     }
     __syncthreads();
+
+    unsigned int mcu_x = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int mcu_y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (mcu_x > img_info.mcu_w-1 || mcu_y > img_info.mcu_h-1) {
+        return;
+    }
 
     int mcu_id = mcu_y*img_info.mcu_w + mcu_x;
 
@@ -377,8 +378,8 @@ __global__ void kernel_rgb_2_yuv_2_dct(const BlockUnit rgb, const BlockUnit dct_
     int y0 = mcu_y * 8;
     int x1 = x0 + 8;
     int y1 = y0 + 8;
-    y1 = y1 < height ? y1 : height;
-    x1 = x1 < width ? x1 : width;
+    y1 = y1 < height+1 ? y1 : height;
+    x1 = x1 < width+1 ? x1 : width;
 
     int sidx = 0;
     int idx = 0;
@@ -386,7 +387,7 @@ __global__ void kernel_rgb_2_yuv_2_dct(const BlockUnit rgb, const BlockUnit dct_
     //unsigned char r,g,b;
     unsigned char yuv[64*3];
     for (int i=0; i<64*3; ++i) {
-        yuv[i] = 0;
+        yuv[i] = 128;
     }
     for (int iy=y0; iy<y1; ++iy) {
         for (int ix=x0; ix<x1; ++ix) {
@@ -467,11 +468,6 @@ __global__ void kernel_rgb_2_yuv_2_dct(const BlockUnit rgb, const BlockUnit dct_
 }
 
 __global__ void kernel_r_2_dct(const BlockUnit rgb, const BlockUnit dct_result, const ImageInfo img_info, const DCTTable dct_table) {
-    unsigned int mcu_x = blockIdx.x * blockDim.x + threadIdx.x;
-    unsigned int mcu_y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (mcu_x > img_info.mcu_w-1 || mcu_y > img_info.mcu_h-1) {
-        return;
-    }
     const int component = img_info.component;
     if (threadIdx.x == 0) {
         for (int i=0; i<64; ++i) {
@@ -481,6 +477,12 @@ __global__ void kernel_r_2_dct(const BlockUnit rgb, const BlockUnit dct_result, 
         }
     }
     __syncthreads();
+
+    unsigned int mcu_x = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int mcu_y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (mcu_x > img_info.mcu_w-1 || mcu_y > img_info.mcu_h-1) {
+        return;
+    }
 
     int mcu_id = mcu_y*img_info.mcu_w + mcu_x;
 
@@ -493,8 +495,8 @@ __global__ void kernel_r_2_dct(const BlockUnit rgb, const BlockUnit dct_result, 
     int y0 = mcu_y * 8;
     int x1 = x0 + 8;
     int y1 = y0 + 8;
-    y1 = y1 < height ? y1 : height;
-    x1 = x1 < width ? x1 : width;
+    y1 = y1 < height+1 ? y1 : height;
+    x1 = x1 < width+1 ? x1 : width;
 
     int sidx = 0;
     int idx = 0;
@@ -573,10 +575,6 @@ __global__ void kernel_r_2_dct_ext(const BlockUnit rgb, const BlockUnit dct_resu
     unsigned int mcu_x0 = (blockIdx.x * blockDim.x + threadIdx.x)*CAL_UNIT;
     unsigned int mcu_y0 = (blockIdx.y * blockDim.y + threadIdx.y)*CAL_UNIT;
 
-    if (mcu_x0 > img_info.mcu_w-1 || mcu_y0 > img_info.mcu_h-1) {
-        return;
-    }
-
     const int component = img_info.component;
     if (threadIdx.x == 0) {
         for (int i=0; i<64; ++i) {
@@ -586,6 +584,10 @@ __global__ void kernel_r_2_dct_ext(const BlockUnit rgb, const BlockUnit dct_resu
         }
     }
     __syncthreads();
+
+    if (mcu_x0 > img_info.mcu_w-1 || mcu_y0 > img_info.mcu_h-1) {
+        return;
+    }
 
     unsigned int mcu_x1 = mcu_x0+CAL_UNIT;
     if (mcu_x1 > img_info.mcu_w-1) {
@@ -609,8 +611,8 @@ __global__ void kernel_r_2_dct_ext(const BlockUnit rgb, const BlockUnit dct_resu
             int y0 = mcu_y * 8;
             int x1 = x0 + 8;
             int y1 = y0 + 8;
-            y1 = y1 < height ? y1 : height;
-            x1 = x1 < width ? x1 : width;
+            y1 = y1 < height+1 ? y1 : height;
+            x1 = x1 < width+1 ? x1 : width;
 
             int sidx = 0;
             int idx = 0;
@@ -683,9 +685,6 @@ __shared__ int _S_ORDER_NATURAL[80];
 __global__ void kernel_huffman_encoding(const BlockUnit dct_result, const BlockUnit huffman_code, int *d_huffman_code_count, const ImageInfo img_info, const HuffmanTable huffman_table) {
     unsigned int mcu_x = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned int mcu_y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (mcu_x > img_info.mcu_w-1 || mcu_y > img_info.mcu_h-1) {
-        return;
-    }
     const int component = img_info.component;
     int* order_natural_ori = (int*)huffman_table.d_order_natural;
     int idxxx = threadIdx.y*blockDim.x + threadIdx.x;
@@ -697,20 +696,11 @@ __global__ void kernel_huffman_encoding(const BlockUnit dct_result, const BlockU
     }
     __syncthreads();
 
+    if (mcu_x > img_info.mcu_w-1 || mcu_y > img_info.mcu_h-1) {
+        return;
+    }
+
     int mcu_id = mcu_y*img_info.mcu_w + mcu_x;
-
-    int width = img_info.width;
-    int height = img_info.height;
-    //int width_ext = img_info.width_ext;
-    //int height_ext = img_info.height_ext;
-
-    int x0 = mcu_x * 8;
-    int y0 = mcu_y * 8;
-    int x1 = x0 + 8;
-    int y1 = y0 + 8;
-    y1 = y1 < height ? y1 : height;
-    x1 = x1 < width ? x1 : width;
-
 
     BitString* HTDCs[3] = {huffman_table.d_huffman_table_Y_DC, huffman_table.d_huffman_table_CbCr_DC, huffman_table.d_huffman_table_CbCr_DC};
     BitString* HTACs[3] = {huffman_table.d_huffman_table_Y_AC, huffman_table.d_huffman_table_CbCr_AC, huffman_table.d_huffman_table_CbCr_AC};
@@ -836,8 +826,8 @@ __global__ void kernel_huffman_writebits(const BlockUnit huffman_code, int *d_hu
 
     const int mcu0 = segid*img_info.segment_mcu_count;
     int mcu1 = mcu0 + img_info.segment_mcu_count;
-    if (mcu1 > img_info.mcu_count-1) {
-        mcu1 = img_info.mcu_count-1;
+    if (mcu1 > img_info.mcu_count) {
+        mcu1 = img_info.mcu_count;
     }
 
     unsigned char* buffer = segment_compressed.d_buffer + segid*MAX_SEGMENT_BYTE;

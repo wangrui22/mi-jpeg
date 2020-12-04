@@ -33,15 +33,15 @@ int main(int argc, char* argv[]) {
     //     }
     // }
 
-    int width = 1920;
-    int height = 1080;
-    unsigned char* rgb = new unsigned char[width*height*3];
-    std::string file_path = "/home/wangrui22/projects/mi-jpeg/data/gray1-1920-1080-rgb.raw";
-
-    // int width = 1024;
-    // int height = 1024;
+    // int width = 1920;
+    // int height = 1080;
     // unsigned char* rgb = new unsigned char[width*height*3];
-    // std::string file_path = "/home/wangrui22/projects/mi-jpeg/data/gray3-1024-1024-rgb.raw";
+    // std::string file_path = "/home/wangrui22/projects/mi-jpeg/data/gray1-1920-1080-rgb.raw";
+
+    int width = 1024;
+    int height = 1024;
+    unsigned char* rgb = new unsigned char[width*height*3];
+    std::string file_path = "/home/wangrui22/projects/mi-jpeg/data/gray3-1024-1024-rgb.raw";
     
     // int width = 4000;
     // int height = 2087;

@@ -469,8 +469,8 @@ int JpegEncoder::compress(std::shared_ptr<Image> rgb, int quality, unsigned char
     for (int i=0; i<_img_info.segment_count; ++i) {
         const int mcu0 = i*_img_info.segment_mcu_count;
         int mcu1 = mcu0 + _img_info.segment_mcu_count;
-        if (mcu1 > _img_info.mcu_count-1) {
-            mcu1 = _img_info.mcu_count-1;
+        if (mcu1 > _img_info.mcu_count) {
+            mcu1 = _img_info.mcu_count;
         }
         for (int m=mcu0; m<mcu1; ++m) {
             MCU& mcu = mcus[m];
@@ -487,8 +487,8 @@ int JpegEncoder::compress(std::shared_ptr<Image> rgb, int quality, unsigned char
     for (int i=0; i<_img_info.segment_count; ++i) {
         const int mcu0 = i*_img_info.segment_mcu_count;
         int mcu1 = mcu0 + _img_info.segment_mcu_count;
-        if (mcu1 > _img_info.mcu_count-1) {
-            mcu1 = _img_info.mcu_count-1;
+        if (mcu1 > _img_info.mcu_count) {
+            mcu1 = _img_info.mcu_count;
         }
         int new_byte=0, new_byte_pos=7;
         for (int m=mcu0; m<mcu1; ++m) {
@@ -569,8 +569,8 @@ void JpegEncoder::rgb_2_yuv(std::shared_ptr<Image> rgb, std::vector<MCU>& mcus) 
         x0*=8;
         int y1 = y0+8;
         int x1 = x0+8;
-        y1 = y1 < height ? y1 : height;
-        x1 = x1 < width ? x1 : width;
+        y1 = y1 < height+1 ? y1 : height;
+        x1 = x1 < width+1 ? x1 : width;
         int sidx = 0;
         int idx = 0;
         float r,g,b,y,u,v;
