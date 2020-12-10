@@ -154,6 +154,46 @@ __global__ void r_2_dct_op_kernel(const BlockUnit rgb, const BlockUnit dct_resul
     );
 }
 
+__global__ void kernel_segment_compact_op(
+    const BlockUnit segment_compressed, 
+    const ImageInfo img_info, 
+    int *d_segment_compressed_byte, 
+    unsigned int* d_segment_compressed_byte_sum,
+    const BlockUnit segment_compressed_compact) {
+
+    const int WARP_COUNT = 8;
+    const int MAX_SEGMENT_BYTE = 4096;
+
+    int wid = threadIdx.y;
+    int segid = blockIdx.x*WARP_COUNT + wid;
+    if (segid > img_info.segment_count-1) {
+        return;
+    }
+
+    __shared__ unsigned int S_OUT_OFFSET[WARP_COUNT];
+
+    unsigned int segment_compressd_byte = d_segment_compressed_byte[segid];
+    if (threadIdx.x == 0) {        
+        S_OUT_OFFSET[wid] = atomicAdd(d_segment_compressed_byte_sum, segment_compressd_byte);
+
+        // unsigned char* src = segment_compressed.d_buffer + segid*MAX_SEGMENT_BYTE;
+        // unsigned char* dst = segment_compressed_compact.d_buffer + S_OUT_OFFSET[wid];
+        // for (int i=0; i<segment_compressd_byte; ++i) {
+        //     dst[i] = src[i];
+        //  } 
+
+    }
+    __syncthreads();
+
+    unsigned int slice = segment_compressd_byte/32;
+    unsigned char* src = segment_compressed.d_buffer + segid*MAX_SEGMENT_BYTE + slice*threadIdx.x;
+    unsigned char* dst = segment_compressed_compact.d_buffer + S_OUT_OFFSET[wid] + slice*threadIdx.x;
+    
+    for (int i=0; i<slice; ++i) {
+       dst[i] = src[i];
+    } 
+}
+
 
 extern "C"
 cudaError_t rgb_2_yuv_2_dct_op(const BlockUnit& rgb, const BlockUnit& dct_result, const ImageInfo& img_info, const DCTTable& dct_table) {
@@ -188,4 +228,23 @@ cudaError_t r_2_dct_op(const BlockUnit& rgb, const BlockUnit& dct_result, const 
     r_2_dct_op_kernel<WARP_COUNT> <<<grid, block>>>(rgb, dct_result, img_info, dct_table);
     
     return cudaDeviceSynchronize();
+}
+
+extern "C"
+cudaError_t segment_compact_op(const BlockUnit& segment_compressed, const ImageInfo& img_info, int *d_segment_compressed_byte, unsigned int* d_segment_compressed_byte_sum,  const BlockUnit& segment_compressed_compact) {
+    const int WARP_COUNT = 8;//这个数值和restart_interval值一样
+
+    //一个warp处理一个segment
+    dim3 block(32, WARP_COUNT);
+    dim3 grid(img_info.segment_count / WARP_COUNT);
+    if (grid.x * WARP_COUNT != img_info.segment_count) {
+        grid.x += 1;
+    }
+
+    cudaFuncSetCacheConfig(kernel_segment_compact_op, cudaFuncCachePreferShared);
+
+    kernel_segment_compact_op << <grid, block >> >(segment_compressed, img_info, d_segment_compressed_byte, d_segment_compressed_byte_sum, segment_compressed_compact);
+
+    return cudaDeviceSynchronize();
+
 }

@@ -857,6 +857,12 @@ __global__ void kernel_huffman_writebits(const BlockUnit huffman_code, int *d_hu
     }
 
     write_byte(0xFF, buffer+segment_compressed_byte, segment_compressed_byte);
+
+    //补充编码让其是32的整数倍，方便后面的warp来批量赋值
+    const int rest = segment_compressed_byte%32;
+    for (int i=0; i<31-rest;++i) {
+        write_byte(0xFF, buffer+segment_compressed_byte, segment_compressed_byte);
+    }
     write_byte(0xD0+segid%8, buffer+segment_compressed_byte, segment_compressed_byte);
 
     // if (segment_compressed_byte > 4095) {

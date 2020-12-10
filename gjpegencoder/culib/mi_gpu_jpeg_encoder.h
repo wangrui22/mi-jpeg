@@ -76,6 +76,8 @@ private:
     int *_d_segment_compressed_byte;
     int *_d_segment_compressed_offset;
 
+    unsigned int *_d_segment_compressed_byte_sum;
+
     BlockUnit _segment_compressed_compact;
     
     
