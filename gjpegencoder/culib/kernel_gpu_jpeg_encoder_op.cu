@@ -53,14 +53,14 @@ __global__ void r_2_dct_op_kernel(const BlockUnit rgb, const BlockUnit dct_resul
     
 
     int tid = threadIdx.x;
-    int wid = tid/32; //0~3
-    int twid = tid - wid*32; //0~31
-    int local_mcu_id = twid/8; //0~3
-    int mcu_id = blockIdx.x*WARP_COUNT*4 + wid*4 + local_mcu_id;
+    int wid = tid>>5; //tid/32 0~3
+    int twid = tid - (wid<<5); //0~31
+    int local_mcu_id = twid>>3; //0~3
+    int mcu_id = blockIdx.x*(WARP_COUNT<<2) + (wid<<2) + local_mcu_id;
     int cal_id = twid & 7; //0~7
 
-    S_DCT_TABLE[twid*2] = dct_table.d_quant_tbl_luminance[twid*2];
-    S_DCT_TABLE[twid*2+1] = dct_table.d_quant_tbl_luminance[twid*2+1];
+    S_DCT_TABLE[twid<<1] = dct_table.d_quant_tbl_luminance[twid<<1];
+    S_DCT_TABLE[(twid<<1)+1] = dct_table.d_quant_tbl_luminance[(twid<<1)+1];
     // _S_DCT_TABLE[64+twid*2] = dct_table.d_quant_tbl_chrominance[twid*2];
     // _S_DCT_TABLE[64+twid*2+1] = dct_table.d_quant_tbl_chrominance[twid*2+1];
 
@@ -78,8 +78,8 @@ __global__ void r_2_dct_op_kernel(const BlockUnit rgb, const BlockUnit dct_resul
     ///\1 rgb->yuv
     int width = img_info.width;
     int height = img_info.height;
-    int x0 = mcu_x * 8;
-    int y0 = mcu_y * 8;
+    int x0 = mcu_x << 3;
+    int y0 = mcu_y << 3;
     int x1 = x0 + 8;
     int y1 = y0 + 8;
     y1 = y1 < height+1 ? y1 : height;
@@ -89,8 +89,7 @@ __global__ void r_2_dct_op_kernel(const BlockUnit rgb, const BlockUnit dct_resul
     float* s_quant_base = S_QUANT + wid*4*64*COMPONET + local_mcu_id*64*COMPONET;
 
     int y = y0 + cal_id;
-    ((uint*)(s_yuv_base))[0] = 0;
-    ((uint*)(s_yuv_base))[1] = 0;
+    
     //补齐0
     // if (y > height-1 ) {
     //     for (int i=0; i<8*COMPONET; ++i) {
@@ -111,12 +110,13 @@ __global__ void r_2_dct_op_kernel(const BlockUnit rgb, const BlockUnit dct_resul
     //     }
     // } 
 
+    //补齐0
+    ((uint*)(s_yuv_base))[0] = 0;
+    ((uint*)(s_yuv_base))[1] = 0;
     //赋值
-    int sidx = 0, idx = 0;
+    const int layer = y*width;
     for (int ix=x0; ix<x1; ++ix) {
-        idx = y*width + ix;
-        sidx = ix-x0;
-        s_yuv_base[sidx] = rgb.d_buffer[3*idx];
+        s_yuv_base[ix-x0] = rgb.d_buffer[3 * (layer + ix)];
     }
 
     __syncthreads();
@@ -130,12 +130,12 @@ __global__ void r_2_dct_op_kernel(const BlockUnit rgb, const BlockUnit dct_resul
     
     //collumn
     float *quant_out1 = s_quant_base + cal_id;
-    dct_1d_8_fast(quant_out1[0], quant_out1[1*8], quant_out1[2*8], quant_out1[3*8], quant_out1[4*8], quant_out1[5*8], quant_out1[6*8], quant_out1[7*8],
-                  quant_out1[0], quant_out1[1*8], quant_out1[2*8], quant_out1[3*8], quant_out1[4*8], quant_out1[5*8], quant_out1[6*8], quant_out1[7*8]);
+    dct_1d_8_fast(quant_out1[0], quant_out1[8], quant_out1[16], quant_out1[24], quant_out1[32], quant_out1[40], quant_out1[48], quant_out1[56],
+                  quant_out1[0], quant_out1[8], quant_out1[16], quant_out1[24], quant_out1[32], quant_out1[40], quant_out1[48], quant_out1[56]);
 
     //write 
     float* tbl = S_DCT_TABLE;
-    const int id = cal_id*8;
+    const int id = cal_id<<3;
     int out0 = rintf(quant_out0[0]*tbl[id]);
     int out1 = rintf(quant_out0[1]*tbl[id+1]);
     int out2 = rintf(quant_out0[2]*tbl[id+2]);
@@ -180,8 +180,8 @@ cudaError_t r_2_dct_op(const BlockUnit& rgb, const BlockUnit& dct_result, const 
     dim3 block(32*WARP_COUNT);
 
     int mcu_count = img_info.mcu_w * img_info.mcu_h;
-    dim3 grid = (mcu_count/16);
-    if (grid.x * 16 != mcu_count) {
+    dim3 grid = (mcu_count/(WARP_COUNT*4));
+    if (grid.x * (WARP_COUNT*4) != mcu_count) {
         grid.x += 1;
     }
 
