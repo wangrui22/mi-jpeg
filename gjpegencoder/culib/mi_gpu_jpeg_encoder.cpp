@@ -22,6 +22,10 @@ cudaError_t segment_offset(const ImageInfo& img_info, int *d_segment_compressed_
 extern "C"
 cudaError_t segment_compact(const BlockUnit& segment_compressed, const ImageInfo& img_info, int *d_segment_compressed_byte, int *d_segment_compressed_offset, const BlockUnit& segment_compressed_compact);
 
+
+extern "C"
+cudaError_t r_2_dct_op(const BlockUnit& rgb, const BlockUnit& dct_result, const ImageInfo& img_info, const DCTTable& dct_table);
+
 namespace {
 /** Default Quantization Table for Y component (zig-zag order)*/
 const unsigned char DEFAULT_QUANTIZATION_LUMINANCE[64] = { 
@@ -450,7 +454,8 @@ int GPUJpegEncoder::compress(int quality, unsigned char*& compress_buffer, unsig
             err = rgb_2_yuv_2_dct(_raw_rgb, _dct_result, _img_info, _dct_table[quality]);
         } else {
             //err = r_2_dct(_raw_rgb, _dct_result, _img_info, _dct_table[quality]);
-            err = gpujpeg_r_dct(_raw_rgb, _dct_result, _img_info, _dct_table[quality]);
+            //err = gpujpeg_r_dct(_raw_rgb, _dct_result, _img_info, _dct_table[quality]);
+            err = r_2_dct_op(_raw_rgb, _dct_result, _img_info, _dct_table[quality]);
         }
         CHECK_CUDA_ERROR(err)
         

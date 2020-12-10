@@ -36,4 +36,4 @@ set(CUDA_NVCC_FLAGS "-gencode=arch=compute_61,code=compute_61;${CUDA_NVCC_FLAGS}
 #但是这样编译的时候会报错：～/culib/smooth.cpp:1:10: fatal error: cuda_runtime.h: No such file or directory #include <cuda_runtime.h>
 #暂时原因不明
 
-add_library(culib SHARED kernel_gpu_jpeg_encoder.cu mi_gpu_jpeg_define.h mi_gpu_jpeg_encoder.h mi_gpu_jpeg_encoder.cpp)
+add_library(culib SHARED kernel_gpu_jpeg_encoder.cu kernel_gpu_jpeg_encoder_op.cu mi_gpu_jpeg_define.h mi_gpu_jpeg_encoder.h mi_gpu_jpeg_encoder.cpp)
