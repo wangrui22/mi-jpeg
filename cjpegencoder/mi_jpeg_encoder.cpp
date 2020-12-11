@@ -282,39 +282,80 @@ inline void write_byte_array(const unsigned char* buf, unsigned int buf_len, uns
     byte += buf_len;
 }
 
+// inline void write_bitstring(const BitString* bs, int counts, int& new_byte, int& new_byte_pos, unsigned char* buffer, unsigned int& byte)
+// {
+// 	const unsigned short mask[] = {1,2,4,8,16,32,64,128,256,512,1024,2048,4096,8192,16384,32768};
+	
+// 	for(int i=0; i<counts; ++i)
+// 	{
+// 		int value = bs[i].value;
+// 		int posval = bs[i].length - 1;
+
+// 		while (posval >= 0)
+// 		{
+// 			if ((value & mask[posval]) != 0)
+// 			{
+// 				new_byte = new_byte  | mask[new_byte_pos];
+// 			}
+// 			posval--;
+// 			new_byte_pos--;
+// 			if (new_byte_pos < 0)
+// 			{
+// 				// Write to stream
+// 				::write_byte((unsigned char)(new_byte), buffer++, byte);
+// 				if (new_byte == 0xFF)
+// 				{
+// 					// Handle special case
+// 					::write_byte((unsigned char)(0x00), buffer++, byte);
+// 				}
+
+// 				// Reinitialize
+// 				new_byte_pos = 7;
+// 				new_byte = 0;
+// 			}
+// 		}
+// 	}
+// }
+
+
 inline void write_bitstring(const BitString* bs, int counts, int& new_byte, int& new_byte_pos, unsigned char* buffer, unsigned int& byte)
 {
-	const unsigned short mask[] = {1,2,4,8,16,32,64,128,256,512,1024,2048,4096,8192,16384,32768};
-	
-	for(int i=0; i<counts; ++i)
-	{
-		int value = bs[i].value;
-		int posval = bs[i].length - 1;
-
-		while (posval >= 0)
-		{
-			if ((value & mask[posval]) != 0)
-			{
-				new_byte = new_byte  | mask[new_byte_pos];
-			}
-			posval--;
-			new_byte_pos--;
-			if (new_byte_pos < 0)
-			{
-				// Write to stream
-				::write_byte((unsigned char)(new_byte), buffer++, byte);
-				if (new_byte == 0xFF)
-				{
-					// Handle special case
-					::write_byte((unsigned char)(0x00), buffer++, byte);
+	const unsigned short mask1[] = {0,1,3,7,15,31,63,127,255};
+    int out_remain_byte = new_byte_pos+1;
+    int in_remain_byte = 0;
+    int value;
+    int length;
+    for(int i=0; i<counts; ++i) {
+        value = bs[i].value;
+        length = bs[i].length;
+        in_remain_byte = length;
+        while (in_remain_byte > 0) {
+            if (in_remain_byte <= out_remain_byte) {
+                //1 把in的剩余完全写到out中
+                int move = out_remain_byte - in_remain_byte;
+                new_byte |= (value << move);
+                out_remain_byte -= in_remain_byte;
+                in_remain_byte = 0;
+            } else {
+                //2 把out填满
+                int move = in_remain_byte-out_remain_byte;
+                new_byte |= (value >> move);
+                value &= (~(mask1[out_remain_byte] << move));
+                in_remain_byte -= out_remain_byte;
+                out_remain_byte = 0;
+            }
+            if (0 == out_remain_byte) {
+                write_byte((unsigned char)(new_byte), buffer++, byte);
+				if (new_byte == 0xFF){
+					//special case
+					write_byte((unsigned char)(0x00), buffer++, byte);
 				}
-
-				// Reinitialize
-				new_byte_pos = 7;
+				out_remain_byte = 8;
 				new_byte = 0;
-			}
-		}
-	}
+            }
+        }
+    }
+    new_byte_pos = out_remain_byte-1;
 }
 
 inline void dct_table_apply_quality(unsigned char* table_raw, int quality) {

@@ -29,6 +29,9 @@ cudaError_t r_2_dct_op(const BlockUnit& rgb, const BlockUnit& dct_result, const 
 extern "C"
 cudaError_t segment_compact_op(const BlockUnit& segment_compressed, const ImageInfo& img_info, int *d_segment_compressed_byte, int *d_segment_compressed_offset, unsigned int* d_segment_compressed_byte_sum,  const BlockUnit& segment_compressed_compact);
 
+extern "C"
+cudaError_t huffman_writebits_op(const BlockUnit& huffman_code, int *d_huffman_code_count, const ImageInfo& img_info, const BlockUnit& segment_compressed, int *d_segment_compressed_byte);
+
 namespace {
 /** Default Quantization Table for Y component (zig-zag order)*/
 const unsigned char DEFAULT_QUANTIZATION_LUMINANCE[64] = { 
@@ -466,6 +469,8 @@ int GPUJpegEncoder::compress(int quality, unsigned char*& compress_buffer, unsig
     err = cudaMemset(_d_segment_compressed_byte_sum, 0, sizeof(unsigned int));
     CHECK_CUDA_ERROR(err)
 
+    std::cout << "memset cost: " << duration_cast<duration<double>>(steady_clock::now()-_start).count()*1000 << " ms\n";
+
     write_jpeg_header(quality);
 
     {
@@ -498,7 +503,14 @@ int GPUJpegEncoder::compress(int quality, unsigned char*& compress_buffer, unsig
         std::cout << "huffman_encode cost: " << t0.end() << " ms\n";
     }
 
-    {
+    if (_is_op) {
+        CudaTimeQuery t0;
+        t0.begin();
+        err = huffman_writebits_op(_huffman_result, _d_huffman_code_count, _img_info, _segment_compressed, _d_segment_compressed_byte);
+        CHECK_CUDA_ERROR(err)
+        
+        std::cout << "huffman_writebits_op cost: " << t0.end() << " ms\n";
+    } else {
         CudaTimeQuery t0;
         t0.begin();
         err = huffman_writebits(_huffman_result, _d_huffman_code_count, _img_info, _segment_compressed, _d_segment_compressed_byte);
@@ -583,6 +595,9 @@ void GPUJpegEncoder::write_bitstring(const BitString* bs, int counts, int& new_b
 }
 
 void GPUJpegEncoder::write_jpeg_header(int quality) {
+
+    steady_clock::time_point _start = steady_clock::now();
+
     _compress_byte = 0;
     
     //SOI
@@ -751,6 +766,8 @@ void GPUJpegEncoder::write_jpeg_header(int quality) {
         write_byte(0x3F);			//Se
         write_byte(0);			//Bf
     }	
+
+    std::cout << "gpu jpeg write header cost " << duration_cast<duration<double>>(steady_clock::now()-_start).count()*1000 << " ms\n";
 }
 
 void GPUJpegEncoder::write_jpeg_segment() {
@@ -848,11 +865,6 @@ void GPUJpegEncoder::write_jpeg_segment_gpu(int segment_compressed_byte) {
             _compress_byte += byte;
         }
     }
-    
-
-
-
-    
 
     std::cout << "gpu jpeg write seg(2) cost " << duration_cast<duration<double>>(steady_clock::now()-_start).count()*1000 << " ms\n";
 }

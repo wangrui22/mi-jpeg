@@ -199,6 +199,110 @@ __global__ void kernel_segment_compact_op(
     } 
 }
 
+__device__ void write_byte_op(unsigned char val, unsigned char* buffer, int& byte) {
+    *buffer = val;
+    byte += 1;
+}
+
+__device__ void write_bitstring_op(const BitString* bs, int counts, int& new_byte, int& new_byte_pos, unsigned char* buffer, int& byte) {
+    const unsigned short mask1[] = {0,1,3,7,15,31,63,127,255};
+    int out_remain_byte = new_byte_pos+1;
+    int in_remain_byte = 0;
+    int value = 0;
+    int length = 0;
+    for(int i=0; i<counts; ++i) {
+        value = bs[i].value;
+        length = bs[i].length;
+        in_remain_byte = length;
+        while (in_remain_byte > 0) {
+            if (in_remain_byte <= out_remain_byte) {
+                //1 把in的剩余完全写到out中
+                int move = out_remain_byte - in_remain_byte;
+                new_byte |= (value << move);
+                out_remain_byte -= in_remain_byte;
+                in_remain_byte = 0;
+            } else {
+                //2 把out填满
+                int move = in_remain_byte-out_remain_byte;
+                new_byte |= (value >> move);
+                value &= (~(mask1[out_remain_byte] << move));
+                in_remain_byte -= out_remain_byte;
+                out_remain_byte = 0;
+            }
+            if (0 == out_remain_byte) {
+                write_byte_op((unsigned char)(new_byte), buffer++, byte);
+				if (new_byte == 0xFF){
+					//special case
+					write_byte_op((unsigned char)(0x00), buffer++, byte);
+				}
+				out_remain_byte = 8;
+				new_byte = 0;
+            }
+        }
+    }
+    new_byte_pos = out_remain_byte-1;
+}
+
+__global__ void kernel_huffman_writebits_op(const BlockUnit huffman_code, int *d_huffman_code_count, const ImageInfo img_info, BlockUnit segment_compressed, int *d_segment_compressed_byte) {
+    unsigned int segid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (segid > img_info.segment_count-1) {
+        return;
+    }
+
+    const int component = img_info.component;
+
+    const unsigned int MCU_HUFFMAN_CAPACITY = 256;
+    const int MAX_SEGMENT_BYTE = 4096;
+
+    const int mcu0 = segid*img_info.segment_mcu_count;
+    int mcu1 = mcu0 + img_info.segment_mcu_count;
+    if (mcu1 > img_info.mcu_count) {
+        mcu1 = img_info.mcu_count;
+    }
+
+    unsigned char* buffer = segment_compressed.d_buffer + segid*MAX_SEGMENT_BYTE;
+    int segment_compressed_byte = 0;
+    
+    int new_byte=0, new_byte_pos=7;
+    for (int m=mcu0; m<mcu1; ++m) {
+        BitString* huffman_code_seg = (BitString*)huffman_code.d_buffer+MCU_HUFFMAN_CAPACITY*component*m;
+        int* huffman_code_count_seg = d_huffman_code_count+component*m;
+        for (int i=0; i<component; ++i) {
+            write_bitstring_op(huffman_code_seg, *huffman_code_count_seg, new_byte, new_byte_pos, buffer+segment_compressed_byte, segment_compressed_byte);
+            huffman_code_seg += MCU_HUFFMAN_CAPACITY;
+            huffman_code_count_seg += 1;    
+        }
+    }
+    if (new_byte_pos != 7) {
+        int bp = new_byte_pos;
+        int b = new_byte; 
+        int mask[8] = {1,2,4,8,16,32,64,128};
+        while (bp>=0) {
+            b = b | mask[bp];                
+            --bp;
+        }
+        write_byte_op((unsigned char)b, buffer+segment_compressed_byte, segment_compressed_byte);
+        new_byte_pos = 7;
+        new_byte = 0;
+    }
+
+    write_byte_op(0xFF, buffer+segment_compressed_byte, segment_compressed_byte);
+
+    //TODO 这里是不是一定得有
+    //补充编码让其是32的整数倍，方便后面的warp来批量赋值
+    const int rest = segment_compressed_byte%32;
+    for (int i=0; i<31-rest;++i) {
+        write_byte_op(0xFF, buffer+segment_compressed_byte, segment_compressed_byte);
+    }
+    write_byte_op(0xD0+segid%8, buffer+segment_compressed_byte, segment_compressed_byte);
+
+    // if (segment_compressed_byte > 4095) {
+    //     printf("segment byte error: %d\n", segment_compressed_byte);   
+    // }
+    d_segment_compressed_byte[segid] = segment_compressed_byte;
+}
+
+
 
 extern "C"
 cudaError_t rgb_2_yuv_2_dct_op(const BlockUnit& rgb, const BlockUnit& dct_result, const ImageInfo& img_info, const DCTTable& dct_table) {
@@ -252,4 +356,18 @@ cudaError_t segment_compact_op(const BlockUnit& segment_compressed, const ImageI
 
     return cudaDeviceSynchronize();
 
+}
+
+extern "C"
+cudaError_t huffman_writebits_op(const BlockUnit& huffman_code, int *d_huffman_code_count, const ImageInfo& img_info, const BlockUnit& segment_compressed, int *d_segment_compressed_byte) {
+    const int WARP_COUNT = 2;
+    dim3 block(WARP_COUNT*32);
+    dim3 grid(img_info.segment_count / (WARP_COUNT*32));
+    if (grid.x * (WARP_COUNT*32) != img_info.segment_count) {
+        grid.x += 1;
+    }
+
+    kernel_huffman_writebits_op << <grid, block >> >(huffman_code, d_huffman_code_count, img_info, segment_compressed, d_segment_compressed_byte);
+    
+    return cudaDeviceSynchronize();
 }
