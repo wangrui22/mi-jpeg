@@ -35,7 +35,7 @@ public:
     GPUJpegEncoder();
     ~GPUJpegEncoder();
     int init(std::vector<int> qualitys, int restart_interval, std::shared_ptr<Image> rgb, bool gray=false);
-    int compress(int quality, unsigned char*& compress_buffer, unsigned int& buffer_len);
+    int compress(int quality, unsigned char*& compress_buffer, unsigned int& buffer_len, bool is_op);
     
 public:
     void write_word(unsigned short val);
@@ -79,6 +79,11 @@ private:
     unsigned int *_d_segment_compressed_byte_sum;
 
     BlockUnit _segment_compressed_compact;
+    unsigned char* _h_segment_compressed_compact;
+    int* _h_segment_compressed_offset;
+    int* _h_segment_compressed_byte;
+
+    bool _is_op;
     
     
 };

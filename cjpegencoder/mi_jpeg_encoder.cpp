@@ -368,7 +368,10 @@ int JpegEncoder::compress(std::shared_ptr<Image> rgb, int quality, unsigned char
     _img_info.mcu_h = _img_info.height_ext/8;
     _img_info.mcu_count = _img_info.mcu_w*_img_info.mcu_h;
     _img_info.segment_mcu_count = 8;
-    _img_info.segment_count = div_and_round_up(_img_info.mcu_count,_img_info.segment_mcu_count);
+    _img_info.segment_count = _img_info.mcu_count/_img_info.segment_mcu_count;
+    if (_img_info.segment_mcu_count * _img_info.segment_count != _img_info.mcu_count) {
+        _img_info.segment_count += 1; 
+    }
 
 	init(quality);
 
@@ -485,6 +488,7 @@ int JpegEncoder::compress(std::shared_ptr<Image> rgb, int quality, unsigned char
     }
 
     for (int i=0; i<_img_info.segment_count; ++i) {
+    //for (int i=_img_info.segment_count-1; i>=0; --i) {
         const int mcu0 = i*_img_info.segment_mcu_count;
         int mcu1 = mcu0 + _img_info.segment_mcu_count;
         if (mcu1 > _img_info.mcu_count) {

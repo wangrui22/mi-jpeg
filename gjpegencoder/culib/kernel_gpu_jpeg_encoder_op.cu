@@ -158,6 +158,7 @@ __global__ void kernel_segment_compact_op(
     const BlockUnit segment_compressed, 
     const ImageInfo img_info, 
     int *d_segment_compressed_byte, 
+    int *d_segment_compressed_offset, 
     unsigned int* d_segment_compressed_byte_sum,
     const BlockUnit segment_compressed_compact) {
 
@@ -174,7 +175,11 @@ __global__ void kernel_segment_compact_op(
 
     unsigned int segment_compressd_byte = d_segment_compressed_byte[segid];
     if (threadIdx.x == 0) {        
-        S_OUT_OFFSET[wid] = atomicAdd(d_segment_compressed_byte_sum, segment_compressd_byte);
+        unsigned int offset = atomicAdd(d_segment_compressed_byte_sum, segment_compressd_byte);
+        d_segment_compressed_offset[segid] = offset;
+        S_OUT_OFFSET[wid] = offset;
+
+        //printf("wid %d, segid %d, offset %d\n", wid, segid, offset);
 
         // unsigned char* src = segment_compressed.d_buffer + segid*MAX_SEGMENT_BYTE;
         // unsigned char* dst = segment_compressed_compact.d_buffer + S_OUT_OFFSET[wid];
@@ -231,7 +236,7 @@ cudaError_t r_2_dct_op(const BlockUnit& rgb, const BlockUnit& dct_result, const 
 }
 
 extern "C"
-cudaError_t segment_compact_op(const BlockUnit& segment_compressed, const ImageInfo& img_info, int *d_segment_compressed_byte, unsigned int* d_segment_compressed_byte_sum,  const BlockUnit& segment_compressed_compact) {
+cudaError_t segment_compact_op(const BlockUnit& segment_compressed, const ImageInfo& img_info, int *d_segment_compressed_byte, int *d_segment_compressed_offset, unsigned int* d_segment_compressed_byte_sum,  const BlockUnit& segment_compressed_compact) {
     const int WARP_COUNT = 8;//这个数值和restart_interval值一样
 
     //一个warp处理一个segment
@@ -243,7 +248,7 @@ cudaError_t segment_compact_op(const BlockUnit& segment_compressed, const ImageI
 
     cudaFuncSetCacheConfig(kernel_segment_compact_op, cudaFuncCachePreferShared);
 
-    kernel_segment_compact_op << <grid, block >> >(segment_compressed, img_info, d_segment_compressed_byte, d_segment_compressed_byte_sum, segment_compressed_compact);
+    kernel_segment_compact_op << <grid, block >> >(segment_compressed, img_info, d_segment_compressed_byte, d_segment_compressed_offset, d_segment_compressed_byte_sum, segment_compressed_compact);
 
     return cudaDeviceSynchronize();
 

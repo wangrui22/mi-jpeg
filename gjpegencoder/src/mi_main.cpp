@@ -100,7 +100,7 @@ int main(int argc, char *argv[]) {
     unsigned int compress_buffer_len = 0;
     const int loop = 100;
     for (int i=0; i<loop; ++i) {
-        encoder.compress(80, compress_buffer, compress_buffer_len);
+        encoder.compress(80, compress_buffer, compress_buffer_len, true);
     }
     std::cout << "gpucompress cost " << duration_cast<duration<double>>(steady_clock::now()-_start).count()*1000.0f/loop << " ms\n";
 
