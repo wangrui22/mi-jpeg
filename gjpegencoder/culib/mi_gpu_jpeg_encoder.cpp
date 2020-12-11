@@ -1,5 +1,6 @@
 #include "mi_gpu_jpeg_encoder.h"
 #include <chrono>
+#include <fstream>
 
 extern "C"
 cudaError_t r_2_dct(const BlockUnit& rgb, const BlockUnit& dct_result, const ImageInfo& img_info, const DCTTable& dct_table);
@@ -506,8 +507,53 @@ int GPUJpegEncoder::compress(int quality, unsigned char*& compress_buffer, unsig
     if (_is_op) {
         CudaTimeQuery t0;
         t0.begin();
-        err = huffman_writebits_op(_huffman_result, _d_huffman_code_count, _img_info, _segment_compressed, _d_segment_compressed_byte);
+
+        std::cout << "\nhuffman_writebits <><><><>\n";
+
+        err = cudaMemset(_segment_compressed.d_buffer, 0, _segment_compressed.length);
         CHECK_CUDA_ERROR(err)
+
+        err = huffman_writebits(_huffman_result, _d_huffman_code_count, _img_info, _segment_compressed, _d_segment_compressed_byte);
+        CHECK_CUDA_ERROR(err)       
+
+        unsigned char* tmp = new unsigned char[_segment_compressed.length];
+        err = cudaMemcpy(tmp, _segment_compressed.d_buffer, _segment_compressed.length, cudaMemcpyDefault);
+        CHECK_CUDA_ERROR(err)   
+
+
+        std::cout << "\nhuffman_writebits_op <><><><>\n";
+
+
+        err = cudaMemset(_segment_compressed.d_buffer, 0, _segment_compressed.length);
+        CHECK_CUDA_ERROR(err)
+
+        err = huffman_writebits_op(_huffman_result, _d_huffman_code_count, _img_info, _segment_compressed, _d_segment_compressed_byte);
+        CHECK_CUDA_ERROR(err)       
+
+        unsigned char* tmp_op = new unsigned char[_segment_compressed.length];
+        err = cudaMemcpy(tmp_op, _segment_compressed.d_buffer, _segment_compressed.length, cudaMemcpyDefault);
+        CHECK_CUDA_ERROR(err)          
+
+        {
+            // std::ofstream out("/data/tmp.raw", std::ios::binary|std::ios::out);
+            // if (out.is_open()) {
+            //     out.write(tmp,_segment_compressed.length);
+            //     out.close();
+            // }
+
+            for (unsigned int i=0; i<_segment_compressed.length; ++i) {
+                if (tmp[i] != tmp_op[i]) {
+                    int t = tmp[i];
+                    int top = tmp_op[i];
+                    std::cerr << "err: " << i << ", " << (int)t << " / " << (int)top << std::endl;
+                    break;
+                }
+            }
+        }
+        
+
+
+
         
         std::cout << "huffman_writebits_op cost: " << t0.end() << " ms\n";
     } else {

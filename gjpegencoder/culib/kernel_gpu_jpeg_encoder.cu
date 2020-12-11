@@ -802,6 +802,9 @@ __device__ void write_bitstring(const BitString* bs, int counts, int& new_byte, 
 			posval--;
 			new_byte_pos--;
 			if (new_byte_pos < 0) {
+                if(blockIdx.x == 3) {
+                    printf("code %d, cid %d, segid %d\n", new_byte, i, blockIdx.x);
+                }
 				write_byte((unsigned char)(new_byte), buffer++, byte);
 				if (new_byte == 0xFF){
 					//special case
@@ -832,6 +835,7 @@ __global__ void kernel_huffman_writebits(const BlockUnit huffman_code, int *d_hu
 
     unsigned char* buffer = segment_compressed.d_buffer + segid*MAX_SEGMENT_BYTE;
     int segment_compressed_byte = 0;
+
     
     int new_byte=0, new_byte_pos=7;
     for (int m=mcu0; m<mcu1; ++m) {
@@ -868,6 +872,11 @@ __global__ void kernel_huffman_writebits(const BlockUnit huffman_code, int *d_hu
     // if (segment_compressed_byte > 4095) {
     //     printf("segment byte error: %d\n", segment_compressed_byte);   
     // }
+
+    if (blockIdx.x == 3) {
+        printf("base buffer: %d, compress byte %d \n", segid*MAX_SEGMENT_BYTE, segment_compressed_byte);
+    }
+
     d_segment_compressed_byte[segid] = segment_compressed_byte;
 }
 
@@ -1017,12 +1026,15 @@ cudaError_t huffman_encoding(const BlockUnit& dct_result, const BlockUnit& huffm
 
 extern "C"
 cudaError_t huffman_writebits(const BlockUnit& huffman_code, int *d_huffman_code_count, const ImageInfo& img_info, const BlockUnit& segment_compressed, int *d_segment_compressed_byte) {
-    const int BLOCK_SIZE = 8;
-    dim3 block(BLOCK_SIZE, 1, 1);
-    dim3 grid(img_info.segment_count / BLOCK_SIZE, 1, 1);
-    if (grid.x * BLOCK_SIZE != img_info.segment_count) {
-        grid.x += 1;
-    }
+    // const int BLOCK_SIZE = 8;
+    // dim3 block(BLOCK_SIZE, 1, 1);
+    // dim3 grid(img_info.segment_count / BLOCK_SIZE, 1, 1);
+    // if (grid.x * BLOCK_SIZE != img_info.segment_count) {
+    //     grid.x += 1;
+    // }
+
+    dim3 block(1);
+    dim3 grid(img_info.segment_count );
 
     kernel_huffman_writebits << <grid, block >> >(huffman_code, d_huffman_code_count, img_info, segment_compressed, d_segment_compressed_byte);
     

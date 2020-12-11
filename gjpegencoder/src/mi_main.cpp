@@ -98,7 +98,7 @@ int main(int argc, char *argv[]) {
     steady_clock::time_point _start = steady_clock::now();    
     unsigned char* compress_buffer = nullptr;
     unsigned int compress_buffer_len = 0;
-    const int loop = 100;
+    const int loop = 1;
     for (int i=0; i<loop; ++i) {
         encoder.compress(80, compress_buffer, compress_buffer_len, true);
     }
