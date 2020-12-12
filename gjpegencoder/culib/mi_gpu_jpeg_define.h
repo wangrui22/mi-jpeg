@@ -36,8 +36,8 @@ struct Image {
 };
 
 struct BitString {
-	short length;	
-	short value;
+	unsigned short length;	
+	unsigned short value;
 };
 
 struct DCTTable {

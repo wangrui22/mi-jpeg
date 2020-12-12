@@ -178,15 +178,6 @@ __global__ void kernel_segment_compact_op(
         unsigned int offset = atomicAdd(d_segment_compressed_byte_sum, segment_compressd_byte);
         d_segment_compressed_offset[segid] = offset;
         S_OUT_OFFSET[wid] = offset;
-
-        //printf("wid %d, segid %d, offset %d\n", wid, segid, offset);
-
-        // unsigned char* src = segment_compressed.d_buffer + segid*MAX_SEGMENT_BYTE;
-        // unsigned char* dst = segment_compressed_compact.d_buffer + S_OUT_OFFSET[wid];
-        // for (int i=0; i<segment_compressd_byte; ++i) {
-        //     dst[i] = src[i];
-        //  } 
-
     }
     __syncthreads();
 
@@ -230,9 +221,6 @@ __device__ void write_bitstring_op(const BitString* bs, int counts, int& new_byt
                 out_remain_byte = 0;
             }
             if (0 == out_remain_byte) {
-                if(blockIdx.x == 3) {
-                    printf("code %d, cid %d, segid %d\n", new_byte, i, blockIdx.x);
-                }
                 write_byte_op((unsigned char)(new_byte), buffer++, byte);
 				if (new_byte == 0xFF){
 					//special case
@@ -244,32 +232,6 @@ __device__ void write_bitstring_op(const BitString* bs, int counts, int& new_byt
         }
     }
     new_byte_pos = out_remain_byte-1;
-
-    //old logic
-    // const unsigned short mask[] = {1,2,4,8,16,32,64,128,256,512,1024,2048,4096,8192,16384,32768};
-	// for(int i=0; i<counts; ++i) {
-	// 	int value = bs[i].value;
-	// 	int posval = bs[i].length - 1;
-	// 	while (posval >= 0) {
-	// 		if ((value & mask[posval]) != 0) {
-	// 			new_byte = new_byte  | mask[new_byte_pos];
-	// 		}
-	// 		posval--;
-	// 		new_byte_pos--;
-	// 		if (new_byte_pos < 0) {
-    //             if(blockIdx.x == 7) {
-    //                 printf("code %d, cid %d, segid %d\n", new_byte, i, blockIdx.x);
-    //             }
-	// 			write_byte_op((unsigned char)(new_byte), buffer++, byte);
-	// 			if (new_byte == 0xFF){
-	// 				//special case
-	// 				write_byte_op((unsigned char)(0x00), buffer++, byte);
-	// 			}
-	// 			new_byte_pos = 7;
-	// 			new_byte = 0;
-	// 		}
-    //     }
-	// }
 }
 
 __global__ void kernel_huffman_writebits_op(const BlockUnit huffman_code, int *d_huffman_code_count, const ImageInfo img_info, BlockUnit segment_compressed, int *d_segment_compressed_byte) {
@@ -329,10 +291,6 @@ __global__ void kernel_huffman_writebits_op(const BlockUnit huffman_code, int *d
     //     printf("segment byte error: %d\n", segment_compressed_byte);   
     // }
 
-    if (blockIdx.x == 3) {
-        printf("base buffer: %d, compress byte %d \n", segid*MAX_SEGMENT_BYTE, segment_compressed_byte);
-    }
-
     d_segment_compressed_byte[segid] = segment_compressed_byte;
 }
 
@@ -384,7 +342,7 @@ cudaError_t segment_compact_op(const BlockUnit& segment_compressed, const ImageI
         grid.x += 1;
     }
 
-    cudaFuncSetCacheConfig(kernel_segment_compact_op, cudaFuncCachePreferShared);
+    //cudaFuncSetCacheConfig(kernel_segment_compact_op, cudaFuncCachePreferShared);
 
     kernel_segment_compact_op << <grid, block >> >(segment_compressed, img_info, d_segment_compressed_byte, d_segment_compressed_offset, d_segment_compressed_byte_sum, segment_compressed_compact);
 
@@ -394,15 +352,12 @@ cudaError_t segment_compact_op(const BlockUnit& segment_compressed, const ImageI
 
 extern "C"
 cudaError_t huffman_writebits_op(const BlockUnit& huffman_code, int *d_huffman_code_count, const ImageInfo& img_info, const BlockUnit& segment_compressed, int *d_segment_compressed_byte) {
-    // const int WARP_COUNT = 2;
-    // dim3 block(WARP_COUNT*32);
-    // dim3 grid(img_info.segment_count / (WARP_COUNT*32));
-    // if (grid.x * (WARP_COUNT*32) != img_info.segment_count) {
-    //     grid.x += 1;
-    // }
-    dim3 block(1);
-    dim3 grid(img_info.segment_count );
-
+    const int WARP_COUNT = 2;
+    dim3 block(WARP_COUNT*32);
+    dim3 grid(img_info.segment_count / (WARP_COUNT*32));
+    if (grid.x * (WARP_COUNT*32) != img_info.segment_count) {
+        grid.x += 1;
+    }
     kernel_huffman_writebits_op << <grid, block >> >(huffman_code, d_huffman_code_count, img_info, segment_compressed, d_segment_compressed_byte);
     
     return cudaDeviceSynchronize();
