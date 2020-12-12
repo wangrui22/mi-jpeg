@@ -181,11 +181,40 @@ __global__ void kernel_segment_compact_op(
     }
     __syncthreads();
 
-    unsigned int slice = segment_compressd_byte/32;
-    unsigned char* src = segment_compressed.d_buffer + segid*MAX_SEGMENT_BYTE + slice*threadIdx.x;
-    unsigned char* dst = segment_compressed_compact.d_buffer + S_OUT_OFFSET[wid] + slice*threadIdx.x;
+    unsigned char* src = segment_compressed.d_buffer + segid*MAX_SEGMENT_BYTE + threadIdx.x;
+    unsigned char* dst = segment_compressed_compact.d_buffer + S_OUT_OFFSET[wid] + threadIdx.x;
+    unsigned int pkg = segment_compressd_byte>>5;
+    unsigned int reset = segment_compressd_byte&31;
+    for (int i=0; i<pkg; ++i) {
+        dst[i<<5] = src[i<<5];
+    }
+    if (threadIdx.x < reset) {
+        dst[pkg<<5] = src[pkg<<5];
+    }
+}
+
+__global__ void kernel_segment_compact_op_2(
+    const BlockUnit segment_compressed, 
+    const ImageInfo img_info, 
+    int *d_segment_compressed_byte, 
+    int *d_segment_compressed_offset, 
+    unsigned int* d_segment_compressed_byte_sum,
+    const BlockUnit segment_compressed_compact) {
+
+    const int MAX_SEGMENT_BYTE = 4096;
+    int segid = blockIdx.x*blockDim.x + threadIdx.x;
+    if (segid > img_info.segment_count-1) {
+        return;
+    }
+
+    unsigned int segment_compressd_byte = d_segment_compressed_byte[segid];
+    unsigned int offset = atomicAdd(d_segment_compressed_byte_sum, segment_compressd_byte);
+    d_segment_compressed_offset[segid] = offset;
+
+    unsigned char* src = segment_compressed.d_buffer + segid*MAX_SEGMENT_BYTE;
+    unsigned char* dst = segment_compressed_compact.d_buffer + offset;
     
-    for (int i=0; i<slice; ++i) {
+    for (int i=0; i<segment_compressd_byte; ++i) {
        dst[i] = src[i];
     } 
 }
@@ -279,12 +308,6 @@ __global__ void kernel_huffman_writebits_op(const BlockUnit huffman_code, int *d
 
     write_byte_op(0xFF, buffer+segment_compressed_byte, segment_compressed_byte);
 
-    //TODO 这里是不是一定得有
-    //补充编码让其是32的整数倍，方便后面的warp来批量赋值
-    const int rest = segment_compressed_byte%32;
-    for (int i=0; i<31-rest;++i) {
-        write_byte_op(0xFF, buffer+segment_compressed_byte, segment_compressed_byte);
-    }
     write_byte_op(0xD0+segid%8, buffer+segment_compressed_byte, segment_compressed_byte);
 
     // if (segment_compressed_byte > 4095) {
@@ -333,9 +356,9 @@ cudaError_t r_2_dct_op(const BlockUnit& rgb, const BlockUnit& dct_result, const 
 
 extern "C"
 cudaError_t segment_compact_op(const BlockUnit& segment_compressed, const ImageInfo& img_info, int *d_segment_compressed_byte, int *d_segment_compressed_offset, unsigned int* d_segment_compressed_byte_sum,  const BlockUnit& segment_compressed_compact) {
-    const int WARP_COUNT = 8;//这个数值和restart_interval值一样
-
+    
     //一个warp处理一个segment
+    const int WARP_COUNT = 8;//这个数值和restart_interval值一样
     dim3 block(32, WARP_COUNT);
     dim3 grid(img_info.segment_count / WARP_COUNT);
     if (grid.x * WARP_COUNT != img_info.segment_count) {
@@ -345,6 +368,23 @@ cudaError_t segment_compact_op(const BlockUnit& segment_compressed, const ImageI
     //cudaFuncSetCacheConfig(kernel_segment_compact_op, cudaFuncCachePreferShared);
 
     kernel_segment_compact_op << <grid, block >> >(segment_compressed, img_info, d_segment_compressed_byte, d_segment_compressed_offset, d_segment_compressed_byte_sum, segment_compressed_compact);
+
+
+    //一个thread处理一个segment 比上面的慢
+    // const int BLOCKDIM = 32;
+    // dim3 block(BLOCKDIM);
+    // dim3 grid(img_info.segment_count / BLOCKDIM);
+    // if (grid.x * BLOCKDIM != img_info.segment_count) {
+    //     grid.x += 1;
+    // }
+
+    // //cudaFuncSetCacheConfig(kernel_segment_compact_op, cudaFuncCachePreferShared);
+
+    // kernel_segment_compact_op_2 << <grid, block >> >(segment_compressed, img_info, d_segment_compressed_byte, d_segment_compressed_offset, d_segment_compressed_byte_sum, segment_compressed_compact);
+
+
+
+    
 
     return cudaDeviceSynchronize();
 
