@@ -27,6 +27,9 @@ cudaError_t segment_compact(const BlockUnit& segment_compressed, const ImageInfo
 extern "C"
 cudaError_t r_2_dct_op(const BlockUnit& rgb, const BlockUnit& dct_result, const ImageInfo& img_info, const DCTTable& dct_table);
 
+extern "C" 
+cudaError_t rgb_2_yuv_2_dct_op(const BlockUnit& rgb, const BlockUnit& dct_result, const ImageInfo& img_info, const DCTTable& dct_table);
+
 extern "C"
 cudaError_t segment_compact_op(const BlockUnit& segment_compressed, const ImageInfo& img_info, int *d_segment_compressed_byte, int *d_segment_compressed_offset, unsigned int* d_segment_compressed_byte_sum,  const BlockUnit& segment_compressed_compact);
 
@@ -470,25 +473,28 @@ int GPUJpegEncoder::compress(int quality, unsigned char*& compress_buffer, unsig
     err = cudaMemset(_d_segment_compressed_byte_sum, 0, sizeof(unsigned int));
     CHECK_CUDA_ERROR(err)
 
-    std::cout << "memset cost: " << duration_cast<duration<double>>(steady_clock::now()-_start).count()*1000 << " ms\n";
+    //std::cout << "memset cost: " << duration_cast<duration<double>>(steady_clock::now()-_start).count()*1000 << " ms\n";
 
     write_jpeg_header(quality);
 
     {
-        CudaTimeQuery t0;
-        t0.begin();
+        // CudaTimeQuery t0;
+        // t0.begin();
         if (3 == _img_info.component) {
-            err = rgb_2_yuv_2_dct(_raw_rgb, _dct_result, _img_info, _dct_table[quality]);
-            std::cout << "rgb_2_yuv_2_dct cost: " << t0.end() << " ms\n";
+            if (_is_op) {
+                err = rgb_2_yuv_2_dct_op(_raw_rgb, _dct_result, _img_info, _dct_table[quality]);
+            } else {
+                err = rgb_2_yuv_2_dct(_raw_rgb, _dct_result, _img_info, _dct_table[quality]);
+            }
+            //std::cout << "rgb_2_yuv_2_dct cost: " << t0.end() << " ms\n";
         } else {
-            //err = gpujpeg_r_dct(_raw_rgb, _dct_result, _img_info, _dct_table[quality]);
             if (_is_op) {
                 err = r_2_dct_op(_raw_rgb, _dct_result, _img_info, _dct_table[quality]);
             } else {
                 err = r_2_dct(_raw_rgb, _dct_result, _img_info, _dct_table[quality]);
             }
             
-            std::cout << "r_2_dct cost: " << t0.end() << " ms\n";
+            //std::cout << "r_2_dct cost: " << t0.end() << " ms\n";
         }
         CHECK_CUDA_ERROR(err)
         
@@ -496,35 +502,35 @@ int GPUJpegEncoder::compress(int quality, unsigned char*& compress_buffer, unsig
     }
 
     {
-        CudaTimeQuery t0;
-        t0.begin();
+        // CudaTimeQuery t0;
+        // t0.begin();
         err = huffman_encoding(_dct_result, _huffman_result, _d_huffman_code_count, _img_info, _huffman_table);
         CHECK_CUDA_ERROR(err)
         
-        std::cout << "huffman_encode cost: " << t0.end() << " ms\n";
+        //std::cout << "huffman_encode cost: " << t0.end() << " ms\n";
     }
 
     if (_is_op) {
-        CudaTimeQuery t0;
-        t0.begin();
+        // CudaTimeQuery t0;
+        // t0.begin();
         err = huffman_writebits_op(_huffman_result, _d_huffman_code_count, _img_info, _segment_compressed, _d_segment_compressed_byte);
         CHECK_CUDA_ERROR(err)
         
-        std::cout << "huffman_writebits_op cost: " << t0.end() << " ms\n";
+        //std::cout << "huffman_writebits_op cost: " << t0.end() << " ms\n";
     } else {
-        CudaTimeQuery t0;
-        t0.begin();
+        // CudaTimeQuery t0;
+        // t0.begin();
         err = huffman_writebits(_huffman_result, _d_huffman_code_count, _img_info, _segment_compressed, _d_segment_compressed_byte);
         CHECK_CUDA_ERROR(err)
         
-        std::cout << "huffman_writebits cost: " << t0.end() << " ms\n";
+        //std::cout << "huffman_writebits cost: " << t0.end() << " ms\n";
     }
 
     int segment_byte = 0;
 
     if (_is_op) {
-        CudaTimeQuery t0;
-        t0.begin();
+        // CudaTimeQuery t0;
+        // t0.begin();
         err = segment_compact_op(_segment_compressed, _img_info, _d_segment_compressed_byte, _d_segment_compressed_offset, _d_segment_compressed_byte_sum, _segment_compressed_compact);
         CHECK_CUDA_ERROR(err)
 
@@ -533,7 +539,7 @@ int GPUJpegEncoder::compress(int quality, unsigned char*& compress_buffer, unsig
         CHECK_CUDA_ERROR(err)
         segment_byte = segsum;
 
-        std::cout << "segment_compact_op cost: " << t0.end() << " ms. segment byte: " << segment_byte << "\n";
+        //std::cout << "segment_compact_op cost: " << t0.end() << " ms. segment byte: " << segment_byte << "\n";
     } else {
         {
             CudaTimeQuery t0;
@@ -574,7 +580,7 @@ int GPUJpegEncoder::compress(int quality, unsigned char*& compress_buffer, unsig
 
     buffer_len = _compress_byte;
     compress_buffer = _compress_buffer;
-    std::cout << "gpu jpeg compress cost " << duration_cast<duration<double>>(steady_clock::now()-_start).count()*1000 << " ms\n\n";
+    //std::cout << "gpu jpeg compress cost " << duration_cast<duration<double>>(steady_clock::now()-_start).count()*1000 << " ms\n\n";
 
     return 0;
 }
@@ -768,12 +774,12 @@ void GPUJpegEncoder::write_jpeg_header(int quality) {
         write_byte(0);			//Bf
     }	
 
-    std::cout << "gpu jpeg write header cost " << duration_cast<duration<double>>(steady_clock::now()-_start).count()*1000 << " ms\n";
+    //std::cout << "gpu jpeg write header cost " << duration_cast<duration<double>>(steady_clock::now()-_start).count()*1000 << " ms\n";
 }
 
 void GPUJpegEncoder::write_jpeg_segment() {
 
-    steady_clock::time_point _start = steady_clock::now();
+    //steady_clock::time_point _start = steady_clock::now();
 
     BitString* huffman_code = new BitString[_img_info.mcu_w*_img_info.mcu_h*MCU_HUFFMAN_CAPACITY*3];
     int* huffman_code_count = new int[_img_info.mcu_w*_img_info.mcu_h*3];
@@ -836,11 +842,11 @@ void GPUJpegEncoder::write_jpeg_segment() {
         write_word(0xFFD0+i%8);
     }
 
-    std::cout << "gpu jpeg write seg cost " << duration_cast<duration<double>>(steady_clock::now()-_start).count()*1000 << " ms\n";
+    //std::cout << "gpu jpeg write seg cost " << duration_cast<duration<double>>(steady_clock::now()-_start).count()*1000 << " ms\n";
 }
 
 void GPUJpegEncoder::write_jpeg_segment_gpu(int segment_compressed_byte) {
-    steady_clock::time_point _start = steady_clock::now();
+    //steady_clock::time_point _start = steady_clock::now();
     if (!_is_op) {
         //1 直接拷贝
         cudaError_t err = cudaMemcpy(_compress_buffer+_compress_byte, _segment_compressed_compact.d_buffer, segment_compressed_byte, cudaMemcpyDefault);
@@ -867,5 +873,5 @@ void GPUJpegEncoder::write_jpeg_segment_gpu(int segment_compressed_byte) {
         }
     }
 
-    std::cout << "gpu jpeg write seg(2) cost " << duration_cast<duration<double>>(steady_clock::now()-_start).count()*1000 << " ms\n";
+    //std::cout << "gpu jpeg write seg(2) cost " << duration_cast<duration<double>>(steady_clock::now()-_start).count()*1000 << " ms\n";
 }

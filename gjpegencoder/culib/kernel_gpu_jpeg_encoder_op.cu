@@ -46,9 +46,8 @@ inline __device__ void dct_1d_8_fast(
 
 template <int WARP_COUNT>
 __global__ void r_2_dct_op_kernel(const BlockUnit rgb, const BlockUnit dct_result, const ImageInfo img_info, const DCTTable dct_table) {
-    const int COMPONET = 1;
-    __shared__ unsigned char S_YUV[WARP_COUNT*4*64*COMPONET];
-    __shared__ float S_QUANT[WARP_COUNT*4*64*COMPONET];
+    __shared__ unsigned char S_YUV[WARP_COUNT*4*64];
+    __shared__ float S_QUANT[WARP_COUNT*4*64];
     __shared__ float S_DCT_TABLE[64];
     
 
@@ -61,11 +60,6 @@ __global__ void r_2_dct_op_kernel(const BlockUnit rgb, const BlockUnit dct_resul
 
     S_DCT_TABLE[twid<<1] = dct_table.d_quant_tbl_luminance[twid<<1];
     S_DCT_TABLE[(twid<<1)+1] = dct_table.d_quant_tbl_luminance[(twid<<1)+1];
-    // _S_DCT_TABLE[64+twid*2] = dct_table.d_quant_tbl_chrominance[twid*2];
-    // _S_DCT_TABLE[64+twid*2+1] = dct_table.d_quant_tbl_chrominance[twid*2+1];
-
-    // printf("block_id: %d, thread_id: %d, warp_id: %d, wrap_thread_id: %d, local_mcu: %d, mcu: %d, cal_id: %d\n",
-    // blockIdx.x, threadIdx.x, wid, twid, local_mcu_id, mcu_id, cal_id);
 
     if (mcu_id > img_info.mcu_count-1) {
         return; 
@@ -85,30 +79,10 @@ __global__ void r_2_dct_op_kernel(const BlockUnit rgb, const BlockUnit dct_resul
     y1 = y1 < height+1 ? y1 : height;
     x1 = x1 < width+1 ? x1 : width;
 
-    unsigned char* s_yuv_base = S_YUV + wid*4*64*COMPONET + local_mcu_id*64*COMPONET + cal_id*COMPONET*8;
-    float* s_quant_base = S_QUANT + wid*4*64*COMPONET + local_mcu_id*64*COMPONET;
+    unsigned char* s_yuv_base = S_YUV + wid*4*64 + local_mcu_id*64 + cal_id*8;
+    float* s_quant_base = S_QUANT + wid*4*64 + local_mcu_id*64;
 
     int y = y0 + cal_id;
-    
-    //补齐0
-    // if (y > height-1 ) {
-    //     for (int i=0; i<8*COMPONET; ++i) {
-    //         s_yuv_base[i] = 0;
-    //     }
-    // } else {
-    //     if (x0 + 8 > height) {
-    //         for (int i=0; i<8*COMPONET; ++i) {
-    //             s_yuv_base[i] = 0;
-    //         }   
-    //     }
-    //     //赋值
-    //     int sidx = 0, idx = 0;
-    //     for (int ix=x0; ix<x1; ++ix) {
-    //         idx = y*width + ix;
-    //         sidx = ix-x0;
-    //         s_yuv_base[sidx] = rgb.d_buffer[3*idx];
-    //     }
-    // } 
 
     //补齐0
     ((uint*)(s_yuv_base))[0] = 0;
@@ -123,7 +97,7 @@ __global__ void r_2_dct_op_kernel(const BlockUnit rgb, const BlockUnit dct_resul
 
     ///\ 2 quantization
     //row 
-    float *quant_out0 = s_quant_base + cal_id*COMPONET*8;
+    float *quant_out0 = s_quant_base + cal_id*8;
     dct_1d_8_fast((float)s_yuv_base[0], (float)s_yuv_base[1], (float)s_yuv_base[2], (float)s_yuv_base[3], 
                   (float)s_yuv_base[4], (float)s_yuv_base[5], (float)s_yuv_base[6], (float)s_yuv_base[7],
                   quant_out0[0], quant_out0[1], quant_out0[2], quant_out0[3], quant_out0[4], quant_out0[5], quant_out0[6], quant_out0[7], 128);
@@ -145,13 +119,147 @@ __global__ void r_2_dct_op_kernel(const BlockUnit rgb, const BlockUnit dct_resul
     int out6 = rintf(quant_out0[6]*tbl[id+6]);
     int out7 = rintf(quant_out0[7]*tbl[id+7]);
     
-    short* quant_write = (short*)dct_result.d_buffer + mcu_id*64*COMPONET + cal_id*COMPONET*8;
+    short* quant_write = (short*)dct_result.d_buffer + mcu_id*64 + cal_id*8;
     ((uint4*)(quant_write))[0] = make_uint4(
         (out0 & 0xFFFF) + (out1 << 16),
         (out2 & 0xFFFF) + (out3 << 16),
         (out4 & 0xFFFF) + (out5 << 16),
         (out6 & 0xFFFF) + (out7 << 16)
     );
+}
+
+template <int WARP_COUNT>
+__global__ void rgb_2_yuv_2_dct_op_kernel(const BlockUnit rgb, const BlockUnit dct_result, const ImageInfo img_info, const DCTTable dct_table) {
+    const int COMPONET = 3;
+    __shared__ unsigned char S_YUV[WARP_COUNT*4*64*COMPONET];
+    __shared__ float S_QUANT[WARP_COUNT*4*64*COMPONET];
+    __shared__ float S_DCT_TABLE[64*2];
+    
+
+    int tid = threadIdx.x;
+    int wid = tid>>5; //tid/32 0~3
+    int twid = tid - (wid<<5); //0~31
+    int local_mcu_id = twid>>3; //0~3
+    int mcu_id = blockIdx.x*(WARP_COUNT<<2) + (wid<<2) + local_mcu_id;
+    int cal_id = twid & 7; //0~7
+
+    S_DCT_TABLE[twid<<1] = dct_table.d_quant_tbl_luminance[twid<<1];
+    S_DCT_TABLE[(twid<<1)+1] = dct_table.d_quant_tbl_luminance[(twid<<1)+1];
+    S_DCT_TABLE[64+(twid<<1)] = dct_table.d_quant_tbl_chrominance[twid<<1];
+    S_DCT_TABLE[64+(twid<<1)+1] = dct_table.d_quant_tbl_chrominance[(twid<<1)+1];
+
+    if (mcu_id > img_info.mcu_count-1) {
+        return; 
+    }
+
+    
+    int mcu_y = mcu_id / img_info.mcu_w;
+    int mcu_x = mcu_id - mcu_y*img_info.mcu_w;
+    
+    ///\1 rgb->yuv
+    int width = img_info.width;
+    int height = img_info.height;
+    int x0 = mcu_x << 3;
+    int y0 = mcu_y << 3;
+    int x1 = x0 + 8;
+    int y1 = y0 + 8;
+    y1 = y1 < height+1 ? y1 : height;
+    x1 = x1 < width+1 ? x1 : width;
+
+    unsigned char* s_yuv_base_mcu = S_YUV + wid*4*64*COMPONET + local_mcu_id*64*COMPONET + cal_id*8;
+    float* s_quant_base_mcu = S_QUANT + wid*4*64*COMPONET + local_mcu_id*64*COMPONET;
+
+    unsigned char* s_yuv_base[3] = {
+        s_yuv_base_mcu,
+        s_yuv_base_mcu + 64,
+        s_yuv_base_mcu + 128
+    };
+
+    float* s_quant_base[3] = {
+        s_quant_base_mcu,
+        s_quant_base_mcu + 64,
+        s_quant_base_mcu + 128
+    };
+
+    int y_cal = y0 + cal_id;
+    
+    //补齐0
+    ((uint*)(s_yuv_base[0]))[0] = 0;
+    ((uint*)(s_yuv_base[0]))[1] = 0;
+    ((uint*)(s_yuv_base[1]))[0] = 0;
+    ((uint*)(s_yuv_base[1]))[1] = 0;
+    ((uint*)(s_yuv_base[2]))[0] = 0;
+    ((uint*)(s_yuv_base[2]))[1] = 0;
+
+    //rgb->yuv
+    float r,g,b,y,u,v;
+    const int layer = y_cal*width;
+    for (int ix=x0; ix<x1; ++ix) {
+        r = (float)rgb.d_buffer[3 * (layer + ix)];
+        g = (float)rgb.d_buffer[3 * (layer + ix) + 1];
+        b = (float)rgb.d_buffer[3 * (layer + ix) + 2];
+        y =  0.2990f*r + 0.5870f*g + 0.1140f*b ;
+        u = -0.1687f*r - 0.3313f*g + 0.5000f*b + 128.0f;
+        v =  0.5000f*r - 0.4187f*g - 0.0813f*b + 128.0f;
+        y = y < 0.0f ? 0.0f : y;
+        y = y > 255.0f ? 255.0f : y;
+        u = u < 0.0f ? 0.0f : u;
+        u = u > 255.0f ? 255.0f : u;
+        v = v < 0.0f ? 0.0f : v;
+        v = v > 255.0f ? 255.0f : v;
+
+        s_yuv_base[0][(ix-x0)] = (unsigned char)y;
+        s_yuv_base[1][(ix-x0)] = (unsigned char)u;
+        s_yuv_base[2][(ix-x0)] = (unsigned char)v;
+    }
+
+    __syncthreads();
+
+    ///\ 2 quantization
+    float *tbls[3] = {S_DCT_TABLE, S_DCT_TABLE+64, S_DCT_TABLE+64};
+
+    short* quant_write_base = (short*)dct_result.d_buffer + mcu_id*64*COMPONET + cal_id*8;
+    short* quant_write[3] = {
+        quant_write_base,
+        quant_write_base + 64,
+        quant_write_base + 128
+    };
+
+    
+    for (int i=0; i<COMPONET; ++i) {
+        //row 
+        unsigned char *yuv_base = s_yuv_base[i];  
+        float *quant_out0 = s_quant_base[i] + cal_id*8;
+        dct_1d_8_fast((float)yuv_base[0], (float)yuv_base[1], (float)yuv_base[2], (float)yuv_base[3], 
+                    (float)yuv_base[4], (float)yuv_base[5], (float)yuv_base[6], (float)yuv_base[7],
+                    quant_out0[0], quant_out0[1], quant_out0[2], quant_out0[3], quant_out0[4], quant_out0[5], quant_out0[6], quant_out0[7], 128);
+        
+        //collumn
+        float *quant_out1 = s_quant_base[i] + cal_id;
+        dct_1d_8_fast(quant_out1[0], quant_out1[8], quant_out1[16], quant_out1[24], quant_out1[32], quant_out1[40], quant_out1[48], quant_out1[56],
+                    quant_out1[0], quant_out1[8], quant_out1[16], quant_out1[24], quant_out1[32], quant_out1[40], quant_out1[48], quant_out1[56]);
+
+        //write 
+        float* tbl = tbls[i];
+        const int id = cal_id<<3;
+        int out0 = rintf(quant_out0[0]*tbl[id]);
+        int out1 = rintf(quant_out0[1]*tbl[id+1]);
+        int out2 = rintf(quant_out0[2]*tbl[id+2]);
+        int out3 = rintf(quant_out0[3]*tbl[id+3]);
+        int out4 = rintf(quant_out0[4]*tbl[id+4]);
+        int out5 = rintf(quant_out0[5]*tbl[id+5]);
+        int out6 = rintf(quant_out0[6]*tbl[id+6]);
+        int out7 = rintf(quant_out0[7]*tbl[id+7]);
+        
+        ((uint4*)(quant_write[i]))[0] = make_uint4(
+            (out0 & 0xFFFF) + (out1 << 16),
+            (out2 & 0xFFFF) + (out3 << 16),
+            (out4 & 0xFFFF) + (out5 << 16),
+            (out6 & 0xFFFF) + (out7 << 16)
+        );
+    }
+    
+    
 }
 
 __global__ void kernel_segment_compact_op(
@@ -321,18 +429,17 @@ __global__ void kernel_huffman_writebits_op(const BlockUnit huffman_code, int *d
 
 extern "C"
 cudaError_t rgb_2_yuv_2_dct_op(const BlockUnit& rgb, const BlockUnit& dct_result, const ImageInfo& img_info, const DCTTable& dct_table) {
-    // const int BLOCK_SIZEX = 4;
-    // const int BLOCK_SIZEY = 4;
-    // dim3 block(BLOCK_SIZEX, BLOCK_SIZEY, 1);
-    // dim3 grid(img_info.mcu_w / BLOCK_SIZEX, img_info.mcu_h / BLOCK_SIZEY);
-    // if (grid.x * BLOCK_SIZEX != img_info.mcu_w) {
-    //     grid.x += 1;
-    // }
-    // if (grid.y * BLOCK_SIZEY != img_info.mcu_h) {
-    //     grid.y += 1;
-    // }
+    const int WARP_COUNT = 4;
+    //一个warp32个线程计算4个mcu,一个block计算16个mcu
+    dim3 block(32*WARP_COUNT);
 
-    // kernel_rgb_2_yuv_2_dct << <grid, block >> >(rgb, dct_result, img_info, dct_table);
+    int mcu_count = img_info.mcu_w * img_info.mcu_h;
+    dim3 grid = (mcu_count/(WARP_COUNT*4));
+    if (grid.x * (WARP_COUNT*4) != mcu_count) {
+        grid.x += 1;
+    }
+
+    rgb_2_yuv_2_dct_op_kernel<WARP_COUNT> <<<grid, block>>>(rgb, dct_result, img_info, dct_table);
     
     return cudaDeviceSynchronize();
 }
